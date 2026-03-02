@@ -142,7 +142,7 @@ class TestParamsDefaults:
 
     def test_log_space_parameters_default(self) -> None:
         p = Params()
-        assert p.log_space_parameters == ["top_width", "side_slope"]
+        assert p.log_space_parameters == ["top_width", "side_slope", "d_gw"]
 
 
 class TestSetSeed:

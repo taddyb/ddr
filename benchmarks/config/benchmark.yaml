@@ -57,6 +57,13 @@ kan:
   use_graph_context: false
   use_node_processor: false
 
+# To enable leakance (groundwater-surface water exchange):
+# params:
+#   use_leakance: true
+# kan:
+#   learnable_parameters: [n, q_spatial, top_width, side_slope, K_D, d_gw]
+#   off_parameters: [K_D, d_gw]
+
 # === DiffRoute-specific configuration ===
 diffroute:
   # Enable/disable DiffRoute comparison

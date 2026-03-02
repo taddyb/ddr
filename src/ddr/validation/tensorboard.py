@@ -59,6 +59,9 @@ class _NoOpTBLogger:
         global_step: int,
         x_vals: Any | None = None,
         pool_elev: Any | None = None,
+        K_D: Any | None = None,
+        d_gw: Any | None = None,
+        zeta: Any | None = None,
     ) -> None:
         """No-op."""
 
@@ -130,6 +133,9 @@ class TBLogger:
         global_step: int,
         x_vals: Any | None = None,
         pool_elev: Any | None = None,
+        K_D: Any | None = None,
+        d_gw: Any | None = None,
+        zeta: Any | None = None,
     ) -> None:
         """Log routing parameter distributions."""
         if not self._should_log(global_step):
@@ -153,6 +159,30 @@ class TBLogger:
             self._writer.add_scalar("params/pool_elev_median", float(p.median()), global_step)
             self._writer.add_scalar("params/pool_elev_min", float(p.min()), global_step)
             self._writer.add_scalar("params/pool_elev_max", float(p.max()), global_step)
+
+        if K_D is not None:
+            kd = K_D.float()
+            self._writer.add_scalar("params/K_D_median", float(kd.median()), global_step)
+            self._writer.add_scalar("params/K_D_mean", float(kd.mean()), global_step)
+            self._writer.add_scalar("params/K_D_min", float(kd.min()), global_step)
+            self._writer.add_scalar("params/K_D_max", float(kd.max()), global_step)
+
+        if d_gw is not None:
+            dg = d_gw.float()
+            self._writer.add_scalar("params/d_gw_median", float(dg.median()), global_step)
+            self._writer.add_scalar("params/d_gw_mean", float(dg.mean()), global_step)
+            self._writer.add_scalar("params/d_gw_min", float(dg.min()), global_step)
+            self._writer.add_scalar("params/d_gw_max", float(dg.max()), global_step)
+
+        if zeta is not None:
+            z = zeta.float()
+            n_reaches = z.numel()
+            losing_pct = float((z > 0).sum()) / n_reaches * 100
+            gaining_pct = float((z < 0).sum()) / n_reaches * 100
+            self._writer.add_scalar("params/leakance_losing_pct", losing_pct, global_step)
+            self._writer.add_scalar("params/leakance_gaining_pct", gaining_pct, global_step)
+            self._writer.add_scalar("params/zeta_median", float(z.median()), global_step)
+            self._writer.add_scalar("params/zeta_mean", float(z.mean()), global_step)
 
     def log_benchmark_metrics(
         self,

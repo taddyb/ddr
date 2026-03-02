@@ -53,3 +53,10 @@ kan:
   - q_spatial
   grid: 3
   k: 3
+
+# To enable leakance (groundwater-surface water exchange):
+# params:
+#   use_leakance: true
+# kan:
+#   learnable_parameters: [n, q_spatial, K_D, d_gw]
+#   off_parameters: [K_D, d_gw]

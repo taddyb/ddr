@@ -45,14 +45,18 @@ class MCNodeProcessor(nn.Module):
     ----------
     d_hidden : int
         Latent embedding dimension D_h.  Must match KAN hidden_size.
+    use_leakance : bool
+        When True, adds a 6th physics channel (zeta) to the node MLP input.
     """
 
-    def __init__(self, d_hidden: int) -> None:
+    def __init__(self, d_hidden: int, use_leakance: bool = False) -> None:
         super().__init__()
-        # NodeMLP: [2*D_h + 5 → D_h → D_h]
-        # 2*D_h from (h, upstream_h), 5 from physics channels
+        self.use_leakance = use_leakance
+        n_physics = 6 if use_leakance else 5
+        # NodeMLP: [2*D_h + n_physics → D_h → D_h]
+        # 2*D_h from (h, upstream_h), n_physics from physics channels
         self.node_mlp = nn.Sequential(
-            nn.Linear(2 * d_hidden + 5, d_hidden),
+            nn.Linear(2 * d_hidden + n_physics, d_hidden),
             nn.SiLU(),
             nn.Linear(d_hidden, d_hidden),
         )
@@ -76,6 +80,7 @@ class MCNodeProcessor(nn.Module):
         c4_lateral: torch.Tensor,
         q_new: torch.Tensor,
         adjacency: torch.Tensor,
+        zeta: torch.Tensor | None = None,
     ) -> torch.Tensor:
         """Single GNN update step using all four MC coefficient terms.
 
@@ -95,6 +100,8 @@ class MCNodeProcessor(nn.Module):
             Q_{i,t+1}           — total discharge at t+1, shape (N,).
         adjacency : torch.Tensor
             Sparse CSR adjacency matrix N, shape (N, N).  N[i,j]=1 if j → i.
+        zeta : torch.Tensor | None
+            Leakance flux [m^3/s], shape (N,).  Only used when use_leakance=True.
 
         Returns
         -------
@@ -104,20 +111,21 @@ class MCNodeProcessor(nn.Module):
         # Aggregate upstream embeddings via adjacency — mirrors MC upstream inflow
         upstream_h = torch.sparse.mm(adjacency, h)  # [N, D_h]
 
-        # Five physics channels, sign-preserving log-transformed for scale invariance
+        # Physics channels, sign-preserving log-transformed for scale invariance
         # Channels directly correspond to the four MC equation terms + total Q
-        phys = torch.stack(
-            [
-                self._signed_log(c1_next_upstream),  # C1 · N@Q_{t+1} — implicit upstream
-                self._signed_log(c2_prev_upstream),  # C2 · N@Q_t     — explicit upstream
-                self._signed_log(c3_self),  # C3 · Q_t       — memory / attenuation
-                self._signed_log(c4_lateral),  # C4 · q'        — lateral forcing
-                self._signed_log(q_new),  # Q_{t+1}        — total discharge
-            ],
-            dim=-1,
-        )  # [N, 5]
+        channels = [
+            self._signed_log(c1_next_upstream),  # C1 · N@Q_{t+1} — implicit upstream
+            self._signed_log(c2_prev_upstream),  # C2 · N@Q_t     — explicit upstream
+            self._signed_log(c3_self),  # C3 · Q_t       — memory / attenuation
+            self._signed_log(c4_lateral),  # C4 · q'        — lateral forcing
+            self._signed_log(q_new),  # Q_{t+1}        — total discharge
+        ]
+        if self.use_leakance and zeta is not None:
+            channels.append(self._signed_log(zeta))  # zeta — leakance flux
 
-        node_input = torch.cat([h, upstream_h, phys], dim=-1)  # [N, 2*D_h + 5]
+        phys = torch.stack(channels, dim=-1)  # [N, 5 or 6]
+
+        node_input = torch.cat([h, upstream_h, phys], dim=-1)  # [N, 2*D_h + n_physics]
         return self.norm(h + self.node_mlp(node_input))  # [N, D_h] residual update
 
 

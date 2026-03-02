@@ -213,6 +213,28 @@ def train(
                             f"Pool elevation: median={p.median():.2f}, range=[{p.min():.2f}, {p.max():.2f}]"
                         )
 
+                K_D_cpu = None
+                d_gw_cpu = None
+                zeta_cpu = None
+                if routing_model.routing_engine.use_leakance:
+                    K_D = routing_model.routing_engine.K_D
+                    d_gw = routing_model.routing_engine.d_gw
+                    zeta = routing_model.routing_engine._zeta_t
+                    if K_D is not None and d_gw is not None and zeta is not None:
+                        K_D_cpu = K_D.detach().cpu()
+                        d_gw_cpu = d_gw.detach().cpu()
+                        zeta_cpu = zeta.detach().cpu()
+                        n_reaches = zeta_cpu.numel()
+                        losing_pct = (zeta_cpu > 0).sum().item() / n_reaches * 100
+                        gaining_pct = (zeta_cpu < 0).sum().item() / n_reaches * 100
+                        log.info(
+                            f"Leakance: K_D median={K_D_cpu.median():.2e}, "
+                            f"range=[{K_D_cpu.min():.2e}, {K_D_cpu.max():.2e}] | "
+                            f"d_gw median={d_gw_cpu.median():.1f}, "
+                            f"range=[{d_gw_cpu.min():.1f}, {d_gw_cpu.max():.1f}] | "
+                            f"losing={losing_pct:.1f}% gaining={gaining_pct:.1f}%"
+                        )
+
                 x_storage = routing_model.routing_engine.x_storage
                 tb.log_routing_params(
                     n_vals=n_vals,
@@ -226,6 +248,9 @@ def train(
                         and routing_model.routing_engine.reservoir_mask.any()
                     )
                     else None,
+                    K_D=K_D_cpu,
+                    d_gw=d_gw_cpu,
+                    zeta=zeta_cpu,
                 )
 
                 random_gage = -1  # TODO: scale out when we have more gauges
@@ -267,6 +292,10 @@ def main(cfg: DictConfig) -> None:
     (cfg.params.save_path / "plots").mkdir(exist_ok=True)
     (cfg.params.save_path / "saved_models").mkdir(exist_ok=True)
     config = validate_config(cfg)
+    log.info(f"Leakance: {'ENABLED' if config.params.use_leakance else 'disabled'}")
+    if config.params.use_leakance:
+        log.info(f"  K_D range: {config.params.parameter_ranges.get('K_D', 'default')}")
+        log.info(f"  d_gw range: {config.params.parameter_ranges.get('d_gw', 'default')}")
     tb = create_tb_logger(
         enabled=config.experiment.log_tensorboard,
         log_dir=config.params.save_path / "tensorboard",

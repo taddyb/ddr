@@ -86,7 +86,7 @@ params:
     q_spatial: [0.0, 1.0]        # Spatial parameter range
     top_width: [1.0, 6000.0]     # Channel top width range (meters)
     side_slope: [0.5, 50.0]      # Channel side slope range
-  log_space_parameters: [top_width, side_slope]
+  log_space_parameters: [top_width, side_slope, d_gw]
   defaults:
     p_spatial: 21
   tau: 3                          # Timestep offset for downsampling hourly -> daily
@@ -130,6 +130,16 @@ kan:
     - side_slope
   grid: 50                        # B-spline grid resolution
   k: 2                            # B-spline order
+
+# To enable leakance (groundwater-surface water exchange):
+# params:
+#   use_leakance: true
+#   parameter_ranges:
+#     K_D: [1e-8, 1e-6]           # Hydraulic exchange rate (1/s)
+#     d_gw: [0.01, 300.0]         # Depth to water table (m, log-space)
+# kan:
+#   learnable_parameters: [n, q_spatial, top_width, side_slope, K_D, d_gw]
+#   off_parameters: [K_D, d_gw]
 
 # =============================================================================
 # DiffRoute-specific configuration

@@ -39,15 +39,16 @@ class dmc(torch.nn.Module):
         self.cfg = cfg
         self.device_num: str | torch.device = device if device is not None else "cpu"
         self.use_node_processor: bool = getattr(cfg.kan, "use_node_processor", False)
+        self.use_leakance: bool = getattr(cfg.params, "use_leakance", False)
 
         # GNN submodules — owned here so autograd flows back through them.
         # node_processor and param_decoder are registered nn.Modules, which means
         # their parameters appear in dmc.parameters() and .to(device) moves them.
         if self.use_node_processor:
             d_hidden = cfg.kan.hidden_size
-            self.node_processor: MCNodeProcessor | None = MCNodeProcessor(d_hidden=d_hidden).to(
-                self.device_num
-            )
+            self.node_processor: MCNodeProcessor | None = MCNodeProcessor(
+                d_hidden=d_hidden, use_leakance=self.use_leakance
+            ).to(self.device_num)
             self.param_decoder: ParamDecoder | None = ParamDecoder(
                 d_hidden=d_hidden,
                 learnable_parameters=cfg.kan.learnable_parameters,

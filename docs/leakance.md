@@ -103,11 +103,14 @@ Flow depth in `_compute_zeta()` is clamped to `depth_lb` (matching `_get_trapezo
 The leakance term enters the Muskingum-Cunge routing as:
 
 ```
-b = C2 * (N @ Q_t) + C3 * Q_t + C4 * q_prime - zeta
+b = C2 * (N @ Q_t) + C3 * Q_t + C4 * (q_prime - zeta)
 ```
 
-Positive zeta (losing) reduces the right-hand side, decreasing downstream discharge.
-Negative zeta (gaining) increases it, adding groundwater baseflow.
+Zeta is subtracted from `q_prime` inside the `C4` coefficient so that gradients
+from the MC coefficients (which depend on velocity, which depends on Manning's n)
+flow through to the leakance term. Positive zeta (losing) reduces the lateral
+inflow contribution, decreasing downstream discharge. Negative zeta (gaining)
+increases it, adding groundwater baseflow.
 
 ## Parameter Ranges
 

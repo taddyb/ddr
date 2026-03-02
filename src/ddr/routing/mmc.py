@@ -71,6 +71,48 @@ def _log_base_q(x: torch.Tensor, q: float) -> torch.Tensor:
     return torch.log(x) / torch.log(torch.tensor(q, dtype=x.dtype))
 
 
+def _compute_depth(
+    q_t: torch.Tensor,
+    n: torch.Tensor,
+    s0: torch.Tensor,
+    p_spatial: torch.Tensor,
+    q_spatial: torch.Tensor,
+    depth_lb: torch.Tensor,
+) -> torch.Tensor:
+    """Invert Manning's equation to get flow depth from discharge.
+
+    Parameters
+    ----------
+    q_t : torch.Tensor
+        Discharge at time t.
+    n : torch.Tensor
+        Manning's roughness coefficient.
+    s0 : torch.Tensor
+        Channel slope.
+    p_spatial : torch.Tensor
+        Spatial parameter p.
+    q_spatial : torch.Tensor
+        Spatial parameter q.
+    depth_lb : torch.Tensor
+        Lower bound for depth.
+
+    Returns
+    -------
+    torch.Tensor
+        Flow depth, clamped to depth_lb.
+    """
+    numerator = q_t * n * (q_spatial + 1)
+    denominator = p_spatial * torch.pow(s0, 0.5)
+    depth = torch.clamp(
+        torch.pow(
+            torch.div(numerator, denominator + 1e-8),
+            torch.div(3.0, 5.0 + 3.0 * q_spatial),
+        ),
+        min=depth_lb,
+    )
+    return depth
+
+
 def _get_trapezoid_velocity(
     q_t: torch.Tensor,
     _n: torch.Tensor,
@@ -113,15 +155,7 @@ def _get_trapezoid_velocity(
     torch.Tensor
         Flow velocity
     """
-    numerator = q_t * _n * (_q_spatial + 1)
-    denominator = p_spatial * torch.pow(_s0, 0.5)
-    depth = torch.clamp(
-        torch.pow(
-            torch.div(numerator, denominator + 1e-8),
-            torch.div(3.0, 5.0 + 3.0 * _q_spatial),
-        ),
-        min=depth_lb,
-    )
+    depth = _compute_depth(q_t, _n, _s0, p_spatial, _q_spatial, depth_lb)
 
     # For z:1 side slopes (z horizontal : 1 vertical)
     _bottom_width = top_width - (2 * side_slope * depth)
@@ -141,6 +175,62 @@ def _get_trapezoid_velocity(
     c_ = torch.clamp(v, min=velocity_lb, max=torch.tensor(15.0, device=v.device))
     c = c_ * 5 / 3
     return c
+
+
+def _compute_zeta(
+    q_t: torch.Tensor,
+    n: torch.Tensor,
+    top_width: torch.Tensor,
+    side_slope: torch.Tensor,
+    s0: torch.Tensor,
+    p_spatial: torch.Tensor,
+    q_spatial: torch.Tensor,
+    length: torch.Tensor,
+    K_D: torch.Tensor,
+    d_gw: torch.Tensor,
+    depth_lb: torch.Tensor,
+) -> torch.Tensor:
+    """Compute leakance (groundwater-surface water exchange).
+
+    zeta = A_wetted * K_D * (depth - h_bed + d_gw)
+    Per docs/leakance.md: positive zeta = losing stream, negative = gaining.
+
+    Parameters
+    ----------
+    q_t : torch.Tensor
+        Discharge at time t.
+    n : torch.Tensor
+        Manning's roughness coefficient.
+    top_width : torch.Tensor
+        Top width of channel.
+    side_slope : torch.Tensor
+        Side slope of channel (z:1).
+    s0 : torch.Tensor
+        Channel slope.
+    p_spatial : torch.Tensor
+        Spatial parameter p.
+    q_spatial : torch.Tensor
+        Spatial parameter q.
+    length : torch.Tensor
+        Channel reach length [m].
+    K_D : torch.Tensor
+        Hydraulic exchange rate [1/s].
+    d_gw : torch.Tensor
+        Depth to water table from ground surface [m].
+    depth_lb : torch.Tensor
+        Lower bound for depth.
+
+    Returns
+    -------
+    torch.Tensor
+        Leakance flux zeta [m^3/s]. Positive = losing, negative = gaining.
+    """
+    depth = _compute_depth(q_t, n, s0, p_spatial, q_spatial, depth_lb)
+    h_bed = top_width / (2 * side_slope + 1e-8)
+    width = torch.pow(p_spatial * depth, q_spatial)
+    A_wetted = width * length
+    dh = depth - h_bed + d_gw
+    return A_wetted * K_D * dh
 
 
 def _level_pool_outflow(
@@ -323,6 +413,12 @@ class MuskingumCunge:
         self.epoch = 0
         self.mini_batch = 0
 
+        # Leakance (groundwater-surface water exchange) state
+        self.use_leakance: bool = cfg.params.use_leakance
+        self.K_D: torch.Tensor | None = None
+        self.d_gw: torch.Tensor | None = None
+        self._zeta_t: torch.Tensor | None = None
+
         # Level pool reservoir routing state
         self.use_reservoir: bool = cfg.params.use_reservoir
         self._pool_elevation_t: torch.Tensor | None = None
@@ -382,6 +478,9 @@ class MuskingumCunge:
         self.slope = None
         self.length = None
         self.x_storage = None
+        self.K_D = None
+        self.d_gw = None
+        self._zeta_t = None
         self.output_indices = None
         self.gage_catchment = None
         self.observations = None
@@ -544,6 +643,20 @@ class MuskingumCunge:
                 value=spatial_parameters["x_storage"],
                 bounds=self.parameter_bounds["x_storage"],
                 log_space="x_storage" in log_space_params,
+            )
+
+        # Leakance parameters (K_D and d_gw)
+        if "K_D" in spatial_parameters:
+            self.K_D = denormalize(
+                value=spatial_parameters["K_D"],
+                bounds=self.parameter_bounds["K_D"],
+                log_space="K_D" in log_space_params,
+            )
+        if "d_gw" in spatial_parameters:
+            self.d_gw = denormalize(
+                value=spatial_parameters["d_gw"],
+                bounds=self.parameter_bounds["d_gw"],
+                log_space="d_gw" in log_space_params,
             )
 
     def _update_params_from_embedding(self) -> None:
@@ -802,8 +915,28 @@ class MuskingumCunge:
         # Calculate inflow from upstream
         i_t = torch.matmul(self.network, self._discharge_t)
 
+        # --- Leakance (groundwater-surface water exchange) ---
+        if self.use_leakance and self.K_D is not None and self.d_gw is not None:
+            zeta = _compute_zeta(
+                q_t=self._discharge_t,
+                n=self.n,
+                top_width=self.top_width,
+                side_slope=self.side_slope,
+                s0=self.slope,
+                p_spatial=self.p_spatial,
+                q_spatial=self.q_spatial,
+                length=self.length,
+                K_D=self.K_D,
+                d_gw=self.d_gw,
+                depth_lb=self.depth_lb,
+            )
+        else:
+            zeta = torch.zeros_like(self._discharge_t)
+
+        self._zeta_t = zeta
+
         # Calculate right-hand side of equation
-        b = (c_2 * i_t) + (c_3 * self._discharge_t) + (c_4 * q_prime_clamp)
+        b = (c_2 * i_t) + (c_3 * self._discharge_t) + (c_4 * (q_prime_clamp - zeta))
 
         # --- Reservoir RHS override ---
         # Set b[res] = level-pool outflow so the sparse solve produces correct
@@ -879,6 +1012,7 @@ class MuskingumCunge:
                 c4_lateral=c4_lat,
                 q_new=q_t1,
                 adjacency=self.network,
+                zeta=zeta if self.use_leakance else None,
             )
             self._update_params_from_embedding()
 

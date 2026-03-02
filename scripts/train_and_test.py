@@ -165,6 +165,10 @@ def main(cfg: DictConfig) -> None:
     (cfg.params.save_path / "saved_models").mkdir(exist_ok=True)
 
     config = validate_config(cfg)
+    log.info(f"Leakance: {'ENABLED' if config.params.use_leakance else 'disabled'}")
+    if config.params.use_leakance:
+        log.info(f"  K_D range: {config.params.parameter_ranges.get('K_D', 'default')}")
+        log.info(f"  d_gw range: {config.params.parameter_ranges.get('d_gw', 'default')}")
     tb = create_tb_logger(
         enabled=config.experiment.log_tensorboard,
         log_dir=config.params.save_path / "tensorboard",

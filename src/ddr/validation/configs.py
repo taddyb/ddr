@@ -83,6 +83,8 @@ _DEFAULT_PARAMETER_RANGES: dict[str, list[float]] = {
     "top_width": [1.0, 5000.0],  # Channel top width, log-space (m)
     "side_slope": [0.5, 50.0],  # H:V ratio, log-space (-)
     "x_storage": [0.0, 0.5],  # Muskingum storage weighting (0=pure storage, 0.5=pure lag)
+    "K_D": [1e-8, 1e-6],  # Hydraulic exchange rate (1/s)
+    "d_gw": [0.01, 300.0],  # Depth to water table from ground surface (m), log-space
 }
 
 
@@ -149,6 +151,7 @@ class Params(BaseModel):
         default_factory=lambda: [
             "top_width",
             "side_slope",
+            "d_gw",
         ],
         description="Parameters to denormalize in log-space for right-skewed distributions",
     )
@@ -157,6 +160,10 @@ class Params(BaseModel):
             "p_spatial": 21,
         },
         description="Default parameter values for physical processes when not learned",
+    )
+    use_leakance: bool = Field(
+        default=False,
+        description="Enable groundwater-surface water exchange (leakance) via Darcy flux in routing.",
     )
     use_reservoir: bool = Field(
         default=False,
