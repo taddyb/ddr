@@ -172,7 +172,7 @@ convention = "numpy"
 "tests/*" = ["D"]
 "*/__init__.py" = ["F401"]
 "src/ddr/bmi/ddr_bmi.py" = ["D102"]  # BMI interface methods are self-documenting (bmipy.Bmi)
-"*.ipynb" = ["E402", "E501", "F401", "F811", "F841", "T201"]  # Common notebook exceptions
+"*.ipynb" = ["E402", "E501", "F401", "F811", "F821", "F841", "T201"]  # Common notebook exceptions; F821 because tutorial cells show method bodies outside class context
 
 [tool.ruff.format]
 docstring-code-format = true
