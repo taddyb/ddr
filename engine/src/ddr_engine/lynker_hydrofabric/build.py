@@ -45,7 +45,9 @@ def write_flowpath_attributes(gpkg_path: Path, out_path: Path) -> None:
     attr_df = pl.read_database(query=attr_query, connection=conn)
 
     # Build lookup: wb-{id} -> row index in attr_df
-    attr_df = attr_df.with_columns(pl.col("id").str.replace("^wb-", "").cast(pl.Int32).alias("numeric_id"))
+    attr_df = attr_df.with_columns(
+        pl.col("id").str.replace("^wb-", "").cast(pl.Float64).cast(pl.Int32).alias("numeric_id")
+    )
     attr_lookup = {row["numeric_id"]: idx for idx, row in enumerate(attr_df.iter_rows(named=True))}
 
     n = len(order)
@@ -75,7 +77,9 @@ def write_flowpath_attributes(gpkg_path: Path, out_path: Path) -> None:
     fp_df = pl.read_database(query=fp_query, connection=conn)
     conn.close()
 
-    fp_df = fp_df.with_columns(pl.col("id").str.replace("^wb-", "").cast(pl.Int32).alias("numeric_id"))
+    fp_df = fp_df.with_columns(
+        pl.col("id").str.replace("^wb-", "").cast(pl.Float64).cast(pl.Int32).alias("numeric_id")
+    )
     fp_lookup = {row["numeric_id"]: row["toid"] for row in fp_df.iter_rows(named=True)}
 
     toid_arr = np.array([fp_lookup.get(int(seg_id), "") or "" for seg_id in order], dtype=object)
