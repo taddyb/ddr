@@ -3,7 +3,7 @@
 # requires-python = ">=3.12"
 # dependencies = [
 #   "earthengine-api>=1.5",
-#   "geedim>=1.8,<2",
+#   "geedim>=2,<3",
 # ]
 # ///
 """Acquire MERIT Hydro rasters from Google Earth Engine.
