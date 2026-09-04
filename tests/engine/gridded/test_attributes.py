@@ -1,0 +1,75 @@
+"""Tests for ddr_engine.gridded.attributes — cell polygons + extractrs zonal extraction."""
+
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+import pytest
+import rioxarray  # noqa: F401 - registers the .rio accessor
+import xarray as xr
+from ddr_engine.gridded.attributes import cell_polygons, extract_cell_attributes
+
+JUNIATA_OUTLET = 138445  # row 192, col 205 -> center (40.25, -77.25)
+
+
+class TestCellPolygons:
+    def test_outlet_cell_bounds(self) -> None:
+        gdf = cell_polygons([JUNIATA_OUTLET])
+        assert gdf.crs is not None and gdf.crs.to_epsg() == 4326
+        assert list(gdf["cell"]) == [JUNIATA_OUTLET]
+        assert gdf.geometry.iloc[0].bounds == (-77.5, 40.0, -77.0, 40.5)
+
+    def test_half_degree_area(self) -> None:
+        gdf = cell_polygons([JUNIATA_OUTLET, JUNIATA_OUTLET - 720])
+        assert np.allclose(gdf.geometry.area, 0.25)  # 0.5 x 0.5 degrees
+
+    def test_order_preserved(self) -> None:
+        ids = [138444, 138445, 138443]
+        assert list(cell_polygons(ids)["cell"]) == ids
+
+
+def _write_tif(path: Path, values: np.ndarray, bounds: tuple[float, float, float, float]) -> None:
+    """Write a small EPSG:4326 GeoTIFF with the given north-up bounds."""
+    xmin, ymin, xmax, ymax = bounds
+    ny, nx = values.shape
+    dx, dy = (xmax - xmin) / nx, (ymax - ymin) / ny
+    da = xr.DataArray(
+        values,
+        dims=("y", "x"),
+        coords={
+            "y": ymax - dy * (np.arange(ny) + 0.5),
+            "x": xmin + dx * (np.arange(nx) + 0.5),
+        },
+    )
+    da.rio.write_crs("EPSG:4326").rio.to_raster(path)
+
+
+class TestExtractCellAttributes:
+    @pytest.fixture()
+    def two_cell_tif(self, tmp_path: Path) -> Path:
+        # covers cells 138445 (-77.5..-77.0) and 138446 (-77.0..-76.5), lat 40.0..40.5
+        values = np.zeros((10, 20), dtype="float32")
+        values[:, :10] = 3.0
+        values[:, 10:] = 7.0
+        path = tmp_path / "toy.tif"
+        _write_tif(path, values, (-77.5, 40.0, -76.5, 40.5))
+        return path
+
+    def test_per_cell_means(self, two_cell_tif: Path) -> None:
+        df = extract_cell_attributes({"toy": two_cell_tif}, [138445, 138446])
+        assert list(df.index) == [138445, 138446]
+        assert df.loc[138445, "toy"] == pytest.approx(3.0)
+        assert df.loc[138446, "toy"] == pytest.approx(7.0)
+
+    def test_scale_factor_applied(self, two_cell_tif: Path) -> None:
+        df = extract_cell_attributes({"toy": two_cell_tif}, [138445], scales={"toy": 1e-4})
+        assert df.loc[138445, "toy"] == pytest.approx(3e-4)
+
+    def test_cell_outside_raster_is_nan(self, two_cell_tif: Path) -> None:
+        df = extract_cell_attributes({"toy": two_cell_tif}, [138445, 0])
+        assert np.isnan(df.loc[0, "toy"])
+
+    def test_returns_dataframe_with_named_index(self, two_cell_tif: Path) -> None:
+        df = extract_cell_attributes({"toy": two_cell_tif}, [138445])
+        assert isinstance(df, pd.DataFrame)
+        assert df.index.name == "cell"
