@@ -15,7 +15,10 @@ bbox (default: CONUS). Resumable: existing tiles are skipped.
 
 This bypasses the registration-gated Dropbox distribution of MERIT Hydro;
 the GEE asset carries the same bands. D8 codes here are ESRI-style
-(1=E, 2=SE, 4=S, ... 128=NE; 0=river mouth, -1=inland sink).
+(1=E, 2=SE, 4=S, ... 128=NE; 0=river mouth, -1=inland sink). The GEE asset
+stores ``dir`` as uint8: inland sinks (-1) arrive as 255, and river mouths
+(0) share the value 0 with ocean nodata on coastal tiles — a D8 trace
+terminates on either, so treat {0/nodata, 255} as terminals.
 
 One-time setup:
     uv run --with earthengine-api earthengine authenticate
