@@ -34,6 +34,7 @@ import pandas as pd
 import rioxarray
 import xarray as xr
 import zarr
+from ddr_benchmarks.gridded import topo_accumulate
 from ddr_engine.gridded.attributes import (
     cell_area_km2,
     cell_polygons,
@@ -115,6 +116,20 @@ def merit_terrain(cells: np.ndarray) -> pd.DataFrame:
     return pd.concat(parts).reindex(cells)
 
 
+def ddm30_log10_uparea(adjacency: Path, cells: np.ndarray) -> pd.Series:
+    """log10 of the DDM30-network-accumulated area (km2) at each cell.
+
+    The routing-consistent counterpart of the MERIT max-upa column, which reports
+    the largest river *touching* a cell (e.g. the Susquehanna clipping the Juniata cell).
+    """
+    g = zarr.open_group(adjacency, mode="r")
+    order = g["order"][:]
+    dn = np.full(len(order), -1, dtype=np.int64)
+    dn[g["indices_1"][:]] = g["indices_0"][:]
+    acc = topo_accumulate(cell_area_km2(order), dn)
+    return pd.Series(np.log10(acc), index=pd.Index(order, name="cell")).reindex(cells)
+
+
 def _worldclim(zip_name: str, tif: str, bbox: tuple[float, float, float, float]) -> xr.DataArray:
     path = f"zip://{WORLDCLIM / zip_name}!{tif}"
     da = rioxarray.open_rasterio(path, masked=True).isel(band=0, drop=True)
@@ -161,6 +176,7 @@ def main() -> None:
     df = extract_cell_attributes(rasters, cells, scales=scales, valid_range=VALID_RANGE)
     df["catchsize"] = cell_area_km2(cells)
     df = df.join(merit_terrain(cells)).join(worldclim_climate(cells, tuple(args.bbox)))
+    df["log10_uparea_ddm30"] = ddm30_log10_uparea(args.adjacency, cells)
     for name in df.columns:
         col = df[name]
         log.info(
