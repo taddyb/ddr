@@ -15,6 +15,7 @@ import geopandas as gpd
 import numpy as np
 import pandas as pd
 import rioxarray
+import xarray as xr
 from shapely.geometry import box
 
 NCOLS = 720
@@ -67,3 +68,29 @@ def extract_cell_attributes(
         if scales and name in scales:
             out[name] *= scales[name]
     return out
+
+
+def cell_area_km2(cell_ids: np.typing.ArrayLike) -> np.ndarray:
+    """Spherical area (km²) of 0.5-degree cells; same formula as ddr_benchmarks.gridded."""
+    ids = np.atleast_1d(np.asarray(cell_ids, dtype=np.int64))
+    lat = LAT0 + (ids // NCOLS) * CELL_DEG
+    r_earth = 6371.0
+    half = np.radians(CELL_DEG / 2)
+    return (
+        r_earth**2 * np.radians(CELL_DEG) * (np.sin(np.radians(lat) + half) - np.sin(np.radians(lat) - half))
+    )
+
+
+def table_to_grid(df: pd.DataFrame, grid_shape: tuple[int, int]) -> xr.Dataset:
+    """Scatter a cell-indexed table onto the (lat, lon) DDM30 grid; NaN where no cell."""
+    nrows, ncols = grid_shape
+    ids = np.asarray(df.index, dtype=np.int64)
+    rows, cols = ids // ncols, ids % ncols
+    data = {}
+    for name in df.columns:
+        grid = np.full(grid_shape, np.nan)
+        grid[rows, cols] = df[name].to_numpy(dtype=float)
+        data[name] = (("lat", "lon"), grid)
+    lat = LAT0 + np.arange(nrows) * CELL_DEG
+    lon = LON0 + np.arange(ncols) * CELL_DEG
+    return xr.Dataset(data, coords={"lat": lat, "lon": lon})

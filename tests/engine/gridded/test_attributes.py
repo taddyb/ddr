@@ -91,3 +91,34 @@ class TestProjectedRaster:
         da.rio.reproject("ESRI:54052").rio.to_raster(path)  # Goode Homolosine, like SoilGrids
         df = extract_cell_attributes({"v": path}, [JUNIATA_OUTLET])
         assert df.loc[JUNIATA_OUTLET, "v"] == pytest.approx(42.0)
+
+
+class TestCellAreaKm2:
+    def test_equator_cell_area(self) -> None:
+        from ddr_engine.gridded.attributes import cell_area_km2
+
+        # row 112 -> lat centre 0.25 (cell spans 0..0.5 deg); ~55.6 km x ~55.6 km
+        area = cell_area_km2([112 * 720])
+        assert area[0] == pytest.approx(3092, rel=0.01)
+
+    def test_area_shrinks_with_latitude(self) -> None:
+        from ddr_engine.gridded.attributes import cell_area_km2
+
+        a = cell_area_km2([112 * 720, JUNIATA_OUTLET])
+        assert a[1] < a[0]
+        assert a[1] == pytest.approx(3092 * np.cos(np.radians(40.25)), rel=0.01)
+
+
+class TestTableToGrid:
+    def test_scatter_to_grid(self) -> None:
+        from ddr_engine.gridded.attributes import table_to_grid
+
+        df = pd.DataFrame({"v": [1.0, 2.0]}, index=pd.Index([0, 720 + 5], name="cell"))
+        ds = table_to_grid(df, grid_shape=(280, 720))
+        assert ds["v"].dims == ("lat", "lon")
+        assert ds["v"].shape == (280, 720)
+        assert ds["v"].values[0, 0] == 1.0
+        assert ds["v"].values[1, 5] == 2.0
+        assert np.isnan(ds["v"].values[2, 2])
+        assert ds["lat"].values[0] == -55.75 and ds["lon"].values[0] == -179.75
+        assert ds["lat"].values[-1] == pytest.approx(83.75)
