@@ -18,8 +18,8 @@ Choices baked in (flag if they should change):
   the same collections. HiHydroSoil values are int x10,000 -> multiply 1e-4.
 - NDVI = MOD13A2 mean over 2000-2019 (x0.0001); snow_fraction = MOD10A1
   NDSI_Snow_Cover mean over 2000-2020 (codes >100 masked).
-- GLWD v2 layer is TOTAL wetland+open-water area percent; an open-water-only
-  subset of the 33 per-class layers is a pending science choice.
+- GLWD: `glwd_v2_openwater_pct` (classes 1-6, the paper's FW) is the one to
+  use; `glwd_v2_area_pct` (all 33 classes) is kept for reference.
 - SoilGrids clay/sand/silt are NOT pulled from GEE (Mollweide, needs
   resampling) - use ISRIC's pre-aggregated 1 km GeoTIFFs directly.
 
@@ -47,10 +47,11 @@ class Layer:
 
     name: str
     asset: str
-    kind: str  # "image" | "ic_filter" (pick one image by index) | "ic_mean" (temporal mean)
+    kind: str  # "image" | "ic_filter" (one image by index) | "ic_sum" (sum of indices) | "ic_mean"
     scale_m: float
     band: str | None = None  # band to select ("image"/"ic_mean")
     index: str | None = None  # system:index to filter ("ic_filter")
+    indices: tuple[str, ...] = ()  # system:index values to sum ("ic_sum")
     date_range: tuple[str, str] | None = None  # for "ic_mean"
     valid_max: float | None = None  # mask values above this before reducing
     max_requests: int = 32  # lower for compute-heavy reductions (EE concurrency limit)
@@ -76,6 +77,14 @@ REGISTRY: list[Layer] = [
         "projects/sat-io/open-datasets/GLWD/GLWD_V2_DELTA_AREA_PCT",
         "image",
         463,
+    ),
+    Layer(  # paper's FW = "fraction of open water": lakes, reservoirs, rivers, permanent waterbodies
+        "glwd_v2_openwater_pct",
+        "projects/sat-io/open-datasets/GLWD/DELTA_AREA_CLASS_PCT",
+        "ic_sum",
+        463,
+        indices=tuple(f"GLWD_v2_delta_class_{i:02d}_pct" for i in range(1, 7)),
+        max_requests=8,
     ),
     Layer(
         "ndvi_mod13_mean",
@@ -124,6 +133,8 @@ def build_ee_image(layer: Layer):  # type: ignore[no-untyped-def] # returns ee.I
     ic = ee.ImageCollection(layer.asset)
     if layer.kind == "ic_filter":
         return ee.Image(ic.filter(ee.Filter.eq("system:index", layer.index)).first())
+    if layer.kind == "ic_sum":
+        return ic.filter(ee.Filter.inList("system:index", list(layer.indices))).sum()
     assert layer.date_range is not None
     ic = ic.filterDate(*layer.date_range).select(layer.band)
     if layer.valid_max is not None:
