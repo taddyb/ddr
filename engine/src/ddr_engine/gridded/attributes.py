@@ -46,16 +46,18 @@ def extract_cell_attributes(
     """
     cells = cell_polygons(cell_ids)
     out = pd.DataFrame(index=pd.Index(cells["cell"], name="cell"))
-    xmin, ymin, xmax, ymax = cells.total_bounds
     for name, path in rasters.items():
         # band 1 is the data; geedim downloads carry a trailing FILL_MASK band
         da = rioxarray.open_rasterio(path, masked=True).isel(band=0, drop=True)
+        # work in the raster's CRS: exact polygons, no raster resampling
+        zones = cells.to_crs(da.rio.crs)
+        xmin, ymin, xmax, ymax = zones.total_bounds
         try:
             da = da.rio.clip_box(minx=xmin, miny=ymin, maxx=xmax, maxy=ymax)
         except Exception:  # noqa: BLE001 - no overlap at all -> all-NaN column
             out[name] = np.nan
             continue
-        covered = cells[cells.intersects(box(*da.rio.bounds()))]
+        covered = zones[zones.intersects(box(*da.rio.bounds()))]
         if covered.empty:
             out[name] = np.nan
             continue

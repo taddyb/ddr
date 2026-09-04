@@ -73,3 +73,21 @@ class TestExtractCellAttributes:
         df = extract_cell_attributes({"toy": two_cell_tif}, [138445])
         assert isinstance(df, pd.DataFrame)
         assert df.index.name == "cell"
+
+
+class TestProjectedRaster:
+    def test_projected_raster_is_reprojected(self, tmp_path: Path) -> None:
+        # constant field written in a projected CRS covering the Juniata outlet cell
+        xmin, ymin, xmax, ymax = -78.0, 39.5, -76.5, 41.0
+        da = xr.DataArray(
+            np.full((30, 30), 42.0, dtype="float32"),
+            dims=("y", "x"),
+            coords={
+                "y": ymax - (ymax - ymin) / 30 * (np.arange(30) + 0.5),
+                "x": xmin + (xmax - xmin) / 30 * (np.arange(30) + 0.5),
+            },
+        ).rio.write_crs("EPSG:4326")
+        path = tmp_path / "projected.tif"
+        da.rio.reproject("ESRI:54052").rio.to_raster(path)  # Goode Homolosine, like SoilGrids
+        df = extract_cell_attributes({"v": path}, [JUNIATA_OUTLET])
+        assert df.loc[JUNIATA_OUTLET, "v"] == pytest.approx(42.0)
