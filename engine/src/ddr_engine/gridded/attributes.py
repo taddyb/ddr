@@ -38,18 +38,24 @@ def extract_cell_attributes(
     rasters: dict[str, Path | str],
     cell_ids: np.typing.ArrayLike,
     scales: dict[str, float] | None = None,
+    valid_range: dict[str, tuple[float, float]] | None = None,
 ) -> pd.DataFrame:
     """Coverage-weighted zonal mean of each raster over each cell.
 
     Returns a DataFrame indexed by cell id (input order), one column per raster
     name; cells without raster coverage are NaN. ``scales`` multiplies a
     column after extraction (e.g. HiHydroSoil int storage -> 1e-4).
+    ``valid_range`` masks raw raster values outside (lo, hi) before
+    aggregation, so unflagged fill/overflow pixels cannot poison a cell mean.
     """
     cells = cell_polygons(cell_ids)
     out = pd.DataFrame(index=pd.Index(cells["cell"], name="cell"))
     for name, path in rasters.items():
         # band 1 is the data; geedim downloads carry a trailing FILL_MASK band
         da = rioxarray.open_rasterio(path, masked=True).isel(band=0, drop=True)
+        if valid_range and name in valid_range:
+            lo, hi = valid_range[name]
+            da = da.where((da >= lo) & (da <= hi))
         # work in the raster's CRS: exact polygons, no raster resampling
         zones = cells.to_crs(da.rio.crs)
         xmin, ymin, xmax, ymax = zones.total_bounds

@@ -122,3 +122,15 @@ class TestTableToGrid:
         assert np.isnan(ds["v"].values[2, 2])
         assert ds["lat"].values[0] == -55.75 and ds["lon"].values[0] == -179.75
         assert ds["lat"].values[-1] == pytest.approx(83.75)
+
+
+class TestValidRange:
+    def test_out_of_range_pixels_masked_before_mean(self, tmp_path: Path) -> None:
+        values = np.full((10, 10), 3.0, dtype="float32")
+        values[0, 0] = 1e9  # fill/overflow artifact
+        path = tmp_path / "fill.tif"
+        _write_tif(path, values, (-77.5, 40.0, -77.0, 40.5))
+        poisoned = extract_cell_attributes({"v": path}, [JUNIATA_OUTLET])
+        assert poisoned.loc[JUNIATA_OUTLET, "v"] > 1e6
+        clean = extract_cell_attributes({"v": path}, [JUNIATA_OUTLET], valid_range={"v": (0, 100)})
+        assert clean.loc[JUNIATA_OUTLET, "v"] == pytest.approx(3.0)

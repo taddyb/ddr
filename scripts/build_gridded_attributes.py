@@ -52,6 +52,11 @@ RASTERS: dict[str, tuple[str, float]] = {
     "WCsat": ("gee/hihydrosoil_wcsat.tif", 1e-4),
 }
 
+# raw-value sanity bounds applied before aggregation (HiHydroSoil has unflagged int32-max overflow pixels)
+VALID_RANGE: dict[str, tuple[float, float]] = dict.fromkeys(
+    ("Ksat", "ALPHA", "N", "ORMC", "WCpF2", "WCsat"), (0, 10000000.0)
+)
+
 log = logging.getLogger("build_gridded_attributes")
 
 
@@ -78,7 +83,7 @@ def main() -> None:
     log.info("%d DDM30 cells in bbox", len(cells))
     rasters = {name: args.data_root / rel for name, (rel, _) in RASTERS.items()}
     scales = {name: scale for name, (_, scale) in RASTERS.items()}
-    df = extract_cell_attributes(rasters, cells, scales=scales)
+    df = extract_cell_attributes(rasters, cells, scales=scales, valid_range=VALID_RANGE)
     df["catchsize"] = cell_area_km2(cells)
     for name in df.columns:
         col = df[name]
