@@ -98,11 +98,11 @@ REGISTRY: list[Layer] = [
         "snow_mod10_mean",
         "MODIS/061/MOD10A1",
         "ic_mean",
-        1000,  # native 500 m, but the 21-yr daily mean is compute-heavy; 1 km is ample for 0.5deg cells
+        5000,  # matches the paper's MOD10CM 0.05deg CMG; the 21-yr daily mean at 1 km took ~8 min/tile
         band="NDSI_Snow_Cover",
         date_range=("2000-02-24", "2021-01-01"),
         valid_max=100,
-        max_requests=4,
+        max_requests=8,
     ),
 ]
 
