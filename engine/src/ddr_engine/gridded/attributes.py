@@ -56,24 +56,34 @@ def extract_cell_attributes(
         if valid_range and name in valid_range:
             lo, hi = valid_range[name]
             da = da.where((da >= lo) & (da <= hi))
-        # work in the raster's CRS: exact polygons, no raster resampling
-        zones = cells.to_crs(da.rio.crs)
-        xmin, ymin, xmax, ymax = zones.total_bounds
-        try:
-            da = da.rio.clip_box(minx=xmin, miny=ymin, maxx=xmax, maxy=ymax)
-        except Exception:  # noqa: BLE001 - no overlap at all -> all-NaN column
-            out[name] = np.nan
-            continue
-        covered = zones[zones.intersects(box(*da.rio.bounds()))]
-        if covered.empty:
-            out[name] = np.nan
-            continue
-        res = da.rename(name).extrs.zonal_stats(covered, stat="mean", id_col="cell")
-        col = res[name].to_series() if hasattr(res, "data_vars") else res.to_series()
-        out[name] = col.reindex(out.index)
+        out[name] = extract_from_dataarray(da, cells, stat="mean").reindex(out.index)
         if scales and name in scales:
             out[name] *= scales[name]
     return out
+
+
+def extract_from_dataarray(
+    da: xr.DataArray, cell_ids: np.typing.ArrayLike | gpd.GeoDataFrame, stat: str = "mean"
+) -> pd.Series:
+    """Zonal ``stat`` of an in-memory georeferenced DataArray over cells (Series indexed by cell).
+
+    ``cell_ids`` may be flat ids or a GeoDataFrame from ``cell_polygons``. Cells
+    without coverage are absent from the result (reindex to fill NaN).
+    """
+    cells = cell_ids if isinstance(cell_ids, gpd.GeoDataFrame) else cell_polygons(cell_ids)
+    empty = pd.Series(dtype=float, index=pd.Index([], name="cell"))
+    # work in the raster's CRS: exact polygons, no raster resampling
+    zones = cells.to_crs(da.rio.crs)
+    xmin, ymin, xmax, ymax = zones.total_bounds
+    try:
+        da = da.rio.clip_box(minx=xmin, miny=ymin, maxx=xmax, maxy=ymax)
+    except Exception:  # noqa: BLE001 - no overlap at all
+        return empty
+    covered = zones[zones.intersects(box(*da.rio.bounds()))]
+    if covered.empty:
+        return empty
+    res = da.rename("v").extrs.zonal_stats(covered, stat=stat, id_col="cell")
+    return res["v"].to_series() if hasattr(res, "data_vars") else res.to_series()
 
 
 def cell_area_km2(cell_ids: np.typing.ArrayLike) -> np.ndarray:
