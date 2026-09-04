@@ -53,6 +53,7 @@ class Layer:
     index: str | None = None  # system:index to filter ("ic_filter")
     date_range: tuple[str, str] | None = None  # for "ic_mean"
     valid_max: float | None = None  # mask values above this before reducing
+    max_requests: int = 32  # lower for compute-heavy reductions (EE concurrency limit)
 
 
 _HHS = "projects/sat-io/open-datasets/HiHydroSoilv2_0"
@@ -88,10 +89,11 @@ REGISTRY: list[Layer] = [
         "snow_mod10_mean",
         "MODIS/061/MOD10A1",
         "ic_mean",
-        500,
+        1000,  # native 500 m, but the 21-yr daily mean is compute-heavy; 1 km is ample for 0.5deg cells
         band="NDSI_Snow_Cover",
         date_range=("2000-02-24", "2021-01-01"),
         valid_max=100,
+        max_requests=4,
     ),
 ]
 
@@ -147,7 +149,11 @@ def download(entries: list[Layer], out_dir: Path, project: str) -> None:
         log.info("downloading %s (%s @ %.0f m)", layer.name, layer.asset, layer.scale_m)
         try:
             gd.MaskedImage(build_ee_image(layer)).download(
-                path, crs="EPSG:4326", scale=layer.scale_m, region=region
+                path,
+                crs="EPSG:4326",
+                scale=layer.scale_m,
+                region=region,
+                max_requests=layer.max_requests,
             )
         except Exception:
             log.exception("failed: %s (rerun to retry)", layer.name)
