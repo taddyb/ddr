@@ -55,6 +55,7 @@ class Layer:
     date_range: tuple[str, str] | None = None  # for "ic_mean"
     valid_max: float | None = None  # mask values above this before reducing
     max_requests: int = 32  # lower for compute-heavy reductions (EE concurrency limit)
+    max_tile_size: float = 4  # MB per request; lower so heavy reductions finish before geedim's timeout
 
 
 _HHS = "projects/sat-io/open-datasets/HiHydroSoilv2_0"
@@ -103,6 +104,7 @@ REGISTRY: list[Layer] = [
         date_range=("2000-02-24", "2021-01-01"),
         valid_max=100,
         max_requests=8,
+        max_tile_size=0.5,  # 4 MB tiles: 3 of 4 done in <3 min, the largest timed out at ~30 min
     ),
 ]
 
@@ -165,6 +167,7 @@ def download(entries: list[Layer], out_dir: Path, project: str) -> None:
                 scale=layer.scale_m,
                 region=region,
                 max_requests=layer.max_requests,
+                max_tile_size=layer.max_tile_size,
             )
         except Exception:
             log.exception("failed: %s (rerun to retry)", layer.name)
