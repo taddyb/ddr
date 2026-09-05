@@ -77,3 +77,55 @@ class TestHargreaves:
         cool = hargreaves_pet_mm_yr(tmin, tmax, lat)
         warm = hargreaves_pet_mm_yr(tmin + 5, tmax + 5, lat)
         assert float(warm[0, 0]) > float(cool[0, 0])
+
+
+class TestSeasonalityIndex:
+    def test_uniform_is_zero(self) -> None:
+        from ddr_engine.gridded.climate import seasonality_index
+
+        monthly = np.full((12, 2, 2), 50.0)
+        assert seasonality_index(monthly) == pytest.approx(0.0)
+
+    def test_single_month_is_walsh_lawler_max(self) -> None:
+        from ddr_engine.gridded.climate import seasonality_index
+
+        monthly = np.zeros((12, 1, 1))
+        monthly[6] = 600.0
+        assert float(seasonality_index(monthly)[0, 0]) == pytest.approx(1.833, abs=1e-3)
+
+
+class TestMonthlyPet:
+    def test_monthly_sums_to_annual(self) -> None:
+        from ddr_engine.gridded.climate import hargreaves_pet_mm_yr, hargreaves_pet_monthly_mm
+
+        tmin = np.linspace(-5, 15, 12)[:, None, None] * np.ones((12, 2, 3))
+        tmax = tmin + 10
+        lat = np.array([40.0, 45.0])
+        monthly = hargreaves_pet_monthly_mm(tmin, tmax, lat)
+        assert monthly.shape == (12, 2, 3)
+        assert np.allclose(monthly.sum(axis=0), hargreaves_pet_mm_yr(tmin, tmax, lat))
+
+
+class TestSnowfallFraction:
+    def test_all_cold_is_one_all_warm_is_zero(self) -> None:
+        from ddr_engine.gridded.climate import snowfall_fraction
+
+        prec = np.full((12, 1, 1), 50.0)
+        assert float(snowfall_fraction(prec, np.full((12, 1, 1), -10.0))[0, 0]) == pytest.approx(1.0)
+        assert float(snowfall_fraction(prec, np.full((12, 1, 1), 20.0))[0, 0]) == pytest.approx(0.0)
+
+    def test_precip_weighted_ramp(self) -> None:
+        from ddr_engine.gridded.climate import snowfall_fraction
+
+        # 6 cold months (-10C) with 100 mm each, 6 warm months (+20C) with 300 mm each -> 600/2400
+        prec = np.array([100] * 6 + [300] * 6, dtype=float)[:, None, None]
+        temp = np.array([-10] * 6 + [20] * 6, dtype=float)[:, None, None]
+        assert float(snowfall_fraction(prec, temp)[0, 0]) == pytest.approx(0.25)
+
+    def test_ramp_midpoint(self) -> None:
+        from ddr_engine.gridded.climate import RAIN_C, SNOW_C, snowfall_fraction
+
+        mid = 0.5 * (RAIN_C + SNOW_C)
+        assert float(
+            snowfall_fraction(np.full((12, 1, 1), 1.0), np.full((12, 1, 1), mid))[0, 0]
+        ) == pytest.approx(0.5)

@@ -11,6 +11,8 @@ with extractrs coverage-weighted means, and writes two files:
                                         it unchanged (point ``attributes`` at it)
   <out>/ddm30_conus_attributes_grid.nc  the same variables on the (lat, lon)
                                         280 x 720 DDM30 grid (ISIMIP-style)
+  <out>/ddm30_conus_attributes.ic       icechunk repo, dim ``divide_id`` = cell id,
+                                        for ddr's icechunk attribute path
 
 Variable names and units follow merit_global_attributes_v2.nc where a
 counterpart exists (meanelevation m, SoilGrids1km_* %, NDVI 0-1, snow_fraction
@@ -42,7 +44,11 @@ from ddr_engine.gridded.attributes import (
     extract_from_dataarray,
     table_to_grid,
 )
-from ddr_engine.gridded.climate import hargreaves_pet_mm_yr
+from ddr_engine.gridded.climate import (
+    hargreaves_pet_monthly_mm,
+    seasonality_index,
+    snowfall_fraction,
+)
 from ddr_engine.gridded.terrain import slope_degrees
 from shapely.geometry import box
 
@@ -150,16 +156,41 @@ def worldclim_climate(cells: np.ndarray, bbox: tuple[float, float, float, float]
     tmax = np.stack(
         [_worldclim("wc2.1_30s_tmax.zip", f"wc2.1_30s_tmax_{m:02d}.tif", bbox).values for m in range(1, 13)]
     )
-    pet = mean_ta.copy(data=hargreaves_pet_mm_yr(tmin, tmax, mean_ta.y.values))
+    prec = np.stack(
+        [_worldclim("wc2.1_30s_prec.zip", f"wc2.1_30s_prec_{m:02d}.tif", bbox).values for m in range(1, 13)]
+    )
+    pet_monthly = hargreaves_pet_monthly_mm(tmin, tmax, mean_ta.y.values)
+    derived = {
+        "ETPOT_Hargr": pet_monthly.sum(axis=0),
+        "seasonality_P": seasonality_index(prec),
+        "seasonality_PET": seasonality_index(pet_monthly),
+        "snowfall_fraction": snowfall_fraction(prec, 0.5 * (tmin + tmax)),
+    }
     df = pd.DataFrame(
         {
             "meanP": extract_from_dataarray(mean_p, polys),
             "meanTa": extract_from_dataarray(mean_ta, polys),
-            "ETPOT_Hargr": extract_from_dataarray(pet, polys),
+            **{k: extract_from_dataarray(mean_ta.copy(data=v), polys) for k, v in derived.items()},
         }
     ).reindex(cells)
     df["aridity"] = df["ETPOT_Hargr"] / df["meanP"]
     return df
+
+
+def write_icechunk(df: pd.DataFrame, path: Path, description: str) -> None:
+    """Write the attribute table to a local icechunk repo with dim ``divide_id`` (= cell id).
+
+    Matches the store layout ddr's AttributesReader expects on its icechunk path
+    (``read_ic`` then index by ``divide_id``); NetCDF stays the ddrs/MERIT-path format.
+    """
+    import icechunk as ic
+
+    ds = xr.Dataset.from_dataframe(df.rename_axis("divide_id"))
+    ds.attrs["description"] = description
+    repo = ic.Repository.open_or_create(ic.local_filesystem_storage(str(path)))
+    session = repo.writable_session("main")
+    ds.to_zarr(session.store, mode="w", consolidated=False, zarr_format=3)
+    session.commit("gridded DDM30 CONUS attributes")
 
 
 def main() -> None:
@@ -192,13 +223,18 @@ def main() -> None:
         )
 
     grid_shape = tuple(zarr.open_group(args.adjacency, mode="r").attrs["grid_shape"])
+    description = "DDM30 0.5-degree cell attributes; cell id = row*720+col (row 0 = southernmost)"
+
     table = xr.Dataset.from_dataframe(df.rename_axis("COMID"))
-    table.attrs["description"] = "DDM30 0.5-degree cell attributes; COMID = row*720+col flat cell id"
+    table.attrs["description"] = description
     table.to_netcdf(args.out / "ddm30_conus_attributes.nc")
-    table_to_grid(df, grid_shape).to_netcdf(args.out / "ddm30_conus_attributes_grid.nc")
-    log.info(
-        "wrote %s and %s", args.out / "ddm30_conus_attributes.nc", args.out / "ddm30_conus_attributes_grid.nc"
-    )
+
+    grid = table_to_grid(df, grid_shape)
+    grid.attrs["description"] = description
+    grid.to_netcdf(args.out / "ddm30_conus_attributes_grid.nc")
+
+    write_icechunk(df, args.out / "ddm30_conus_attributes.ic", description)
+    log.info("wrote %s{.nc,_grid.nc,.ic}", args.out / "ddm30_conus_attributes")
 
 
 if __name__ == "__main__":
