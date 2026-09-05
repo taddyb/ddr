@@ -183,6 +183,9 @@ def build(cells: np.ndarray, bbox: tuple[float, float, float, float], raster_dir
             continue
         polys = cell_polygons(blk_cells)
         df = extract_cell_attributes(rasters, blk_cells, scales=scales, valid_range=VALID_RANGE)
+        texture = list(SOILGRIDS)
+        no_soil = df[texture].sum(axis=1) < 1.0  # SoilGrids fills 0 over permanent water
+        df.loc[no_soil, texture] = np.nan
         df["meanslope"] = block_slope(polys, blk, rasters["meanelevation"]).reindex(df.index)
         df = df.join(block_climate(polys, blk))
         parts.append(df)
