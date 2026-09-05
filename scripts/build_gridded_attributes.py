@@ -14,7 +14,7 @@ with extractrs coverage-weighted means, and writes two files:
 
 Variable names and units follow merit_global_attributes_v2.nc where a
 counterpart exists (meanelevation m, SoilGrids1km_* %, NDVI 0-1, snow_fraction
-0-1, FW 0-1, catchsize km2, meanslope degrees, log10_uparea log10 km2, meanP
+0-1, FW 0-1, catchsize km2, meanslope degrees, log10_uparea log10 km2 (DDM30-accumulated), meanP
 mm/yr, meanTa degC, ETPOT_Hargr mm/yr, aridity PET/P); HiHydroSoil variables
 use the paper's names. Terrain comes from the MERIT Hydro 3" tiles, climate
 from WorldClim 2.1 30" (bio1, bio12, monthly tmin/tmax -> Hargreaves PET).
@@ -108,7 +108,7 @@ def merit_terrain(cells: np.ndarray) -> pd.DataFrame:
             pd.DataFrame(
                 {
                     "meanslope": extract_from_dataarray(slope, tile_cells, stat="mean"),
-                    "log10_uparea": np.log10(extract_from_dataarray(upa, tile_cells, stat="max")),
+                    "log10_uparea_merit": np.log10(extract_from_dataarray(upa, tile_cells, stat="max")),
                 }
             )
         )
@@ -117,10 +117,13 @@ def merit_terrain(cells: np.ndarray) -> pd.DataFrame:
 
 
 def ddm30_log10_uparea(adjacency: Path, cells: np.ndarray) -> pd.Series:
-    """log10 of the DDM30-network-accumulated area (km2) at each cell.
+    """log10_uparea: DDM30-network-accumulated area (km2) at each cell.
 
-    The routing-consistent counterpart of the MERIT max-upa column, which reports
-    the largest river *touching* a cell (e.g. the Susquehanna clipping the Juniata cell).
+    Cumulative area function over the routing network: a headwater cell is its
+    own catchsize, each downstream cell adds everything upstream. This is the
+    canonical column; log10_uparea_merit (max MERIT upa in the cell) is the same
+    function on MERIT's 3" network and picks up any large river touching the
+    cell (e.g. the Susquehanna clipping the Juniata outlet cell).
     """
     g = zarr.open_group(adjacency, mode="r")
     order = g["order"][:]
@@ -176,7 +179,7 @@ def main() -> None:
     df = extract_cell_attributes(rasters, cells, scales=scales, valid_range=VALID_RANGE)
     df["catchsize"] = cell_area_km2(cells)
     df = df.join(merit_terrain(cells)).join(worldclim_climate(cells, tuple(args.bbox)))
-    df["log10_uparea_ddm30"] = ddm30_log10_uparea(args.adjacency, cells)
+    df["log10_uparea"] = ddm30_log10_uparea(args.adjacency, cells)
     for name in df.columns:
         col = df[name]
         log.info(
