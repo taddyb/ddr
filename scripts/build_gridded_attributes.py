@@ -129,7 +129,14 @@ def _window(path: str, bbox: tuple[float, float, float, float], buffer: float = 
 
 
 def _wc(zip_name: str, tif: str, bbox: tuple[float, float, float, float]) -> xr.DataArray:
-    return _window(f"zip://{WORLDCLIM / zip_name}!{tif}", bbox)
+    """Read a WorldClim window, preferring extracted GeoTIFFs over seeking into the zips.
+
+    Windowed reads through zip:// decompress from the start of each deflate block,
+    which dominated build time (~2 min per 30-degree block); plain GeoTIFFs are
+    seekable. Extract once with: unzip -j wc2.1_30s_<var>.zip -d worldclim/tif
+    """
+    plain = WORLDCLIM / "tif" / tif
+    return _window(str(plain) if plain.exists() else f"zip://{WORLDCLIM / zip_name}!{tif}", bbox)
 
 
 def block_climate(polys: gpd.GeoDataFrame, bbox: tuple[float, float, float, float]) -> pd.DataFrame:
