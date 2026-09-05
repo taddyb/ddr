@@ -47,6 +47,7 @@ from ddr_engine.gridded.attributes import (
     cells_in_box,
     extract_cell_attributes,
     extract_from_dataarray,
+    polygon_area_mean,
     table_to_grid,
 )
 from ddr_engine.gridded.climate import (
@@ -64,6 +65,7 @@ DEM_BUFFER_DEG = 0.05  # halo so slope gradients are two-sided at block edges
 DATA_ROOT = Path("/mnt/ssd1/data/gridded_attrs")
 OUT_ROOT = Path("/mnt/ssd1/data/icechunk")  # alongside merit_global_attributes_v2.nc
 ADJACENCY = Path("data/ddm30/ddm30_adjacency.zarr")
+GLHYMPS = DATA_ROOT / "glhymps/extracted/GLHYMPS/GLHYMPS.gdb"  # Porosity, log10 permeability (m2)
 WORLDCLIM = DATA_ROOT / "worldclim"  # wc2.1_30s_{bio,tmin,tmax,prec}.zip, read via vsizip
 
 # variable name -> (raster path relative to the mode's raster dir, scale to target units)
@@ -166,6 +168,32 @@ def block_climate(polys: gpd.GeoDataFrame, bbox: tuple[float, float, float, floa
     return df
 
 
+def block_hydrogeology(bbox: tuple[float, float, float, float], cells: np.ndarray) -> pd.DataFrame:
+    """Porosity (-) and permeability (log10 m2) per cell, area-weighted from GLHYMPS polygons.
+
+    Read with a bbox filter so the 1.1 GB global vector is never loaded whole. The
+    arithmetic mean of log10 k is the geometric mean of k, which is the standard way
+    to average permeability.
+    """
+    import pyogrio
+    from pyproj import Transformer
+
+    cols = {"Porosity": "Porosity", "Permeability_no_permafrost": "permeability"}
+    empty = pd.DataFrame(index=pd.Index(cells, name="cell"), columns=list(cols.values()), dtype=float)
+    if not GLHYMPS.exists():
+        log.warning("GLHYMPS not found at %s; skipping hydrogeology", GLHYMPS)
+        return empty
+    crs = pyogrio.read_info(GLHYMPS)["crs"]
+    tf = Transformer.from_crs("EPSG:4326", crs, always_xy=True)
+    xmin, ymin = tf.transform(bbox[0], bbox[1])
+    xmax, ymax = tf.transform(bbox[2], bbox[3])
+    gdf = pyogrio.read_dataframe(GLHYMPS, columns=list(cols), bbox=(xmin, ymin, xmax, ymax))
+    if gdf.empty:
+        return empty
+    out = polygon_area_mean(gdf, list(cols), cells)
+    return out.rename(columns=cols)
+
+
 def block_slope(
     polys: gpd.GeoDataFrame, bbox: tuple[float, float, float, float], dem_path: Path
 ) -> pd.Series:
@@ -190,7 +218,7 @@ def build(cells: np.ndarray, bbox: tuple[float, float, float, float], raster_dir
         no_soil = df[texture].sum(axis=1) < 1.0  # SoilGrids fills 0 over permanent water
         df.loc[no_soil, texture] = np.nan
         df["meanslope"] = block_slope(polys, blk, rasters["meanelevation"]).reindex(df.index)
-        df = df.join(block_climate(polys, blk))
+        df = df.join(block_climate(polys, blk)).join(block_hydrogeology(blk, blk_cells))
         parts.append(df)
         log.info("block %d %s -> %d cells", i, blk, len(blk_cells))
     return pd.concat(parts).reindex(cells)

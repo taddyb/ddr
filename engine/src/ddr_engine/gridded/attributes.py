@@ -136,3 +136,27 @@ def cells_in_box(cell_ids: np.typing.ArrayLike, bbox: tuple[float, float, float,
     lon = LON0 + (ids % NCOLS) * CELL_DEG
     xmin, ymin, xmax, ymax = bbox
     return ids[(lon >= xmin) & (lon < xmax) & (lat >= ymin) & (lat < ymax)]
+
+
+def polygon_area_mean(
+    gdf: gpd.GeoDataFrame, value_cols: list[str], cell_ids: np.typing.ArrayLike
+) -> pd.DataFrame:
+    """Area-weighted mean of polygon attributes over each cell.
+
+    The overlay runs in the polygons' own CRS, so an equal-area source (GLHYMPS is
+    World Cylindrical Equal Area) yields true area weights. Weights use only the
+    covered part of a cell, so partial coverage does not bias the mean toward zero;
+    cells with no overlapping polygon are NaN.
+    """
+    cells = cell_polygons(cell_ids)
+    zones = cells.to_crs(gdf.crs) if gdf.crs is not None else cells
+    pieces = gpd.overlay(gdf[[*value_cols, "geometry"]], zones[["cell", "geometry"]], how="intersection")
+    out = pd.DataFrame(index=pd.Index(cells["cell"], name="cell"), columns=value_cols, dtype=float)
+    if pieces.empty:
+        return out
+    pieces["_w"] = pieces.geometry.area
+    for col in value_cols:
+        num = pieces.assign(_p=pieces[col] * pieces["_w"]).groupby("cell")["_p"].sum()
+        den = pieces[pieces[col].notna()].groupby("cell")["_w"].sum()
+        out[col] = (num / den).reindex(out.index)
+    return out

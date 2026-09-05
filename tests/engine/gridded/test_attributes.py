@@ -168,3 +168,39 @@ class TestCellsInBox:
         # 138445 centre (40.25, -77.25); 138446 centre (40.25, -76.75)
         sel = cells_in_box(np.array([138445, 138446]), (-77.5, 40.0, -77.0, 40.5))
         assert sel.tolist() == [138445]
+
+
+class TestPolygonAreaMean:
+    def test_area_weighted_mean_of_two_polygons(self) -> None:
+        import geopandas as gpd
+        from ddr_engine.gridded.attributes import polygon_area_mean
+        from shapely.geometry import box as sbox
+
+        # cell 138445 spans (-77.5, 40.0)-(-77.0, 40.5); two polygons split it 3:1 by area
+        gdf = gpd.GeoDataFrame(
+            {"v": [10.0, 2.0]},
+            geometry=[sbox(-77.5, 40.0, -77.125, 40.5), sbox(-77.125, 40.0, -77.0, 40.5)],
+            crs="EPSG:4326",
+        )
+        out = polygon_area_mean(gdf, ["v"], [138445])
+        assert out.loc[138445, "v"] == pytest.approx(0.75 * 10.0 + 0.25 * 2.0)
+
+    def test_cell_with_no_polygons_is_nan(self) -> None:
+        import geopandas as gpd
+        from ddr_engine.gridded.attributes import polygon_area_mean
+        from shapely.geometry import box as sbox
+
+        gdf = gpd.GeoDataFrame({"v": [1.0]}, geometry=[sbox(-77.4, 40.1, -77.2, 40.3)], crs="EPSG:4326")
+        out = polygon_area_mean(gdf, ["v"], [138445, 0])
+        assert out.loc[138445, "v"] == pytest.approx(1.0)
+        assert np.isnan(out.loc[0, "v"])
+
+    def test_partial_coverage_uses_covered_area_only(self) -> None:
+        import geopandas as gpd
+        from ddr_engine.gridded.attributes import polygon_area_mean
+        from shapely.geometry import box as sbox
+
+        # polygon covers only a quarter of the cell; the mean is still that polygon's value
+        gdf = gpd.GeoDataFrame({"v": [7.0]}, geometry=[sbox(-77.5, 40.0, -77.25, 40.25)], crs="EPSG:4326")
+        out = polygon_area_mean(gdf, ["v"], [138445])
+        assert out.loc[138445, "v"] == pytest.approx(7.0)

@@ -25,6 +25,7 @@ dependencies = [
   "extractrs[rio]>=0.1.3",
   "geopandas",
   "polars>=1.31.0",
+  "pyogrio>=0.10",
   "pyarrow>=20.0.0",
   "rustworkx>=0.16.0",
 ]

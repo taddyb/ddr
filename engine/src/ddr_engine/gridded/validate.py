@@ -54,6 +54,8 @@ UNITS: dict[str, Spec] = {
     "ORMC": Spec("%", 0, 100),
     "WCpF2": Spec("m3/m3", 0, 1),
     "WCsat": Spec("m3/m3", 0, 1),
+    "Porosity": Spec("-", 0, 1),
+    "permeability": Spec("log10 m2", -20, -8),
     "catchsize": Spec("km2", 0, 3100),  # 0.5 deg cell at the equator is 3092 km2
     "log10_uparea": Spec("log10 km2", 0, 7.2),  # Amazon ~6.1e6 km2
     "meanP": Spec("mm/year", 0, 13000),
