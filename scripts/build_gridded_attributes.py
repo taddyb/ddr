@@ -85,6 +85,9 @@ SOILGRIDS: dict[str, tuple[str, float]] = {
     "SoilGrids1km_sand": ("soilgrids/sand_0-5cm_mean_1000.tif", 0.1),
     "SoilGrids1km_silt": ("soilgrids/silt_0-5cm_mean_1000.tif", 0.1),
 }
+# fractions clipped after scaling: GLWD's six open-water class percentages sum to 101 in
+# places (per-class rounding), and a fraction above 1 would be meaningless downstream
+CLIP: dict[str, tuple[float, float]] = {"FW": (0.0, 1.0), "snow_fraction": (0.0, 1.0)}
 # raw-value bounds applied before aggregation (HiHydroSoil has unflagged int32-max pixels)
 VALID_RANGE: dict[str, tuple[float, float]] = dict.fromkeys(
     ("Ksat", "ALPHA", "N", "ORMC", "WCpF2", "WCsat"), (0, 10000000.0)
@@ -226,6 +229,9 @@ def main() -> None:
     cells = grid_cells(args.adjacency, bbox)
     log.info("%d DDM30 cells; rasters from %s", len(cells), raster_dir)
     df = build(cells, bbox, raster_dir)
+    for name, (lo, hi) in CLIP.items():
+        if name in df:
+            df[name] = df[name].clip(lo, hi)
     df["catchsize"] = cell_area_km2(cells)
     df["log10_uparea"] = network_log10_uparea(args.adjacency, cells)
     for name in sorted(df.columns):
