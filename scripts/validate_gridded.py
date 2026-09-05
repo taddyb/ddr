@@ -36,6 +36,7 @@ from ddr_engine.gridded.attributes import cell_area_km2
 from ddr_engine.gridded.validate import (
     Check,
     check_attribute_consistency,
+    check_coverage,
     check_mass_balance,
     check_network,
     check_units,
@@ -101,9 +102,23 @@ def mc_coefficients_check(length: np.ndarray, slope: np.ndarray, discharge: np.n
         total += len(length)
         xs.append(x)
         cs.append(courant)
+    c_1, c_2, c_3, c_4, *_ = coefficients(length, slope, discharge)
+    sum_err = float(np.abs(c_1 + c_2 + c_3 - 1.0).max())
+    lat_err = float(np.abs(c_4 - (c_1 + c_2)).max())
     return [
         Check("MC denominators positive", n_bad_denom == 0, f"{n_bad_denom} non-positive denominators"),
         Check("MC coefficients finite", n_bad_coef == 0, f"{n_bad_coef} non-finite coefficients"),
+        Check(
+            "MC conserves mass (c1+c2+c3=1)",
+            sum_err < 1e-5,
+            f"max |c1+c2+c3-1| = {sum_err:.2e}",
+        ),
+        Check(
+            "MC lateral weight (c4=c1+c2)",
+            lat_err < 1e-5,
+            f"max |c4-(c1+c2)| = {lat_err:.2e}; with the identity above the steady state "
+            "is exactly topological accumulation, i.e. the scheme conserves mass",
+        ),
         Check(
             "MC regime (informational)",
             True,
@@ -121,6 +136,7 @@ def routing_stability(
     slope: np.ndarray,
     discharge: np.ndarray,
     n_steps: int = 72,
+    max_steady: int = 6000,
 ) -> list[Check]:
     """Route a synthetic flood through the real network with ddr's implicit solve.
 
@@ -149,8 +165,20 @@ def routing_stability(
         n_neg += int((q_t < 0).sum())
         peak = max(peak, float(np.nanmax(q_t)))
     total = n * n_steps
-    outlet, lateral = float(q_t[terminals].sum()), float(q_prime.sum())
-    rel = abs(outlet - lateral) / lateral
+    lateral = float(q_prime.sum())
+
+    # spin-up with constant inflow until the outlet total stops changing
+    q_s = np.zeros(n)
+    prev, steps = 0.0, 0
+    while steps < max_steady:
+        steps += 1
+        q_s = spsolve_triangular(a, c_2 * (adj @ q_s) + c_3 * q_s + c_4 * q_prime, lower=True)
+        outlet = float(q_s[terminals].sum())
+        if outlet > 0 and abs(outlet - prev) / outlet < 1e-6:
+            break
+        prev = outlet
+    outlet = float(q_s[terminals].sum())
+    ratio = outlet / lateral
     return [
         Check("routing solve finite", n_bad == 0, f"{n_bad} non-finite discharges over {n_steps} h"),
         Check(
@@ -159,9 +187,10 @@ def routing_stability(
             f"{n_neg}/{total} cell-hours ({100.0 * n_neg / total:.3f}%)",
         ),
         Check(
-            "routing mass balance at outlets",
-            rel < 0.05,
-            f"outlets {outlet:.5g} vs lateral inflow {lateral:.5g} m3/s ({100 * rel:.2f}%)",
+            "routing converges to accumulation",
+            0.99 < ratio < 1.01,
+            f"converged in {steps} h; outlets carry {100 * ratio:.2f}% of lateral inflow "
+            f"({outlet:.5g} of {lateral:.5g} m3/s)",
         ),
         Check("routing peak bounded", peak < 1e3 * lateral, f"peak {peak:.4g} m3/s"),
     ]
@@ -192,13 +221,23 @@ def main() -> None:
     sub_cols = np.array([local[int(c)] for c in cols[keep]], dtype=np.int64)
     q_mean = mean_discharge(df["meanP"].to_numpy(), 10 ** df["log10_uparea"].to_numpy())
     length, slope = g["length_m"][:][idx], g["slope"][:][idx]
+    # cells outside WorldClim's land mask have no discharge estimate; route the rest
+    usable = np.isfinite(q_mean) & (length > 0) & (slope > 0)
+    n_skipped = int((~usable).sum())
+    q_mean = np.where(usable, q_mean, 0.0)
 
     sections = {
         "flow direction": check_network(rows, cols, lat, lon, g["basin"][:], ncols=720)
         + check_mass_balance(area, topo_accumulate(area, dn), dn),
         "units": check_units(df),
+        "coverage": check_coverage(df),
         "attribute consistency": check_attribute_consistency(df),
-        "MC coefficients": mc_coefficients_check(length, slope, q_mean),
+        "MC coefficients": [
+            Check(
+                "inputs usable", True, f"{n_skipped} cell(s) without a discharge estimate set to zero inflow"
+            ),
+            *mc_coefficients_check(length[usable], slope[usable], q_mean[usable]),
+        ],
         "routing stability": routing_stability(sub_rows, sub_cols, length, slope, q_mean),
     }
 

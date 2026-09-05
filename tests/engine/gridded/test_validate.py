@@ -5,6 +5,7 @@ import pandas as pd
 from ddr_engine.gridded.validate import (
     UNITS,
     check_attribute_consistency,
+    check_coverage,
     check_network,
     check_units,
 )
@@ -114,3 +115,30 @@ class TestAttributeConsistency:
         assert not next(
             r for r in check_attribute_consistency(df) if r.name == "log10_uparea >= cell area"
         ).passed
+
+
+class TestCoverage:
+    def test_full_coverage_passes(self) -> None:
+        df = pd.DataFrame({"meanP": [1.0, 2.0], "NDVI": [0.3, 0.4]})
+        assert all(r.passed for r in check_coverage(df))
+
+    def test_small_gap_passes_but_is_reported(self) -> None:
+        df = pd.DataFrame({"meanP": [1.0] * 99 + [np.nan]})
+        c = next(r for r in check_coverage(df) if "meanP" in r.name)
+        assert c.passed and "1 cell" in c.detail
+
+    def test_large_gap_fails(self) -> None:
+        df = pd.DataFrame({"meanP": [1.0] * 50 + [np.nan] * 50})
+        assert not next(r for r in check_coverage(df) if "meanP" in r.name).passed
+
+
+class TestTextureNanHandling:
+    def test_all_nan_texture_rows_are_skipped(self) -> None:
+        df = pd.DataFrame(
+            {
+                "SoilGrids1km_clay": [20.0, np.nan],
+                "SoilGrids1km_sand": [40.0, np.nan],
+                "SoilGrids1km_silt": [40.0, np.nan],
+            }
+        )
+        assert next(r for r in check_attribute_consistency(df) if r.name == "texture sums to 100%").passed

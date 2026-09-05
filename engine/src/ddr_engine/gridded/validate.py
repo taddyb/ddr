@@ -88,7 +88,8 @@ def check_attribute_consistency(df: pd.DataFrame, tol: float = 1e-3) -> list[Che
     out = []
     texture = ["SoilGrids1km_clay", "SoilGrids1km_sand", "SoilGrids1km_silt"]
     if all(c in df for c in texture):
-        s = df[texture].sum(axis=1).dropna()
+        # min_count keeps all-missing rows missing (water cells) instead of summing to 0
+        s = df[texture].sum(axis=1, min_count=1).dropna()
         bad = int((np.abs(s - 100) > 0.5).sum())
         out.append(Check("texture sums to 100%", bad == 0, f"{bad} cells off by >0.5%"))
     if {"WCpF2", "WCsat"} <= set(df):
@@ -150,4 +151,15 @@ def check_mass_balance(
     inner = ~terminals
     n_dec = int((accumulated[dn[inner]] < accumulated[inner] - tol).sum())
     out.append(Check("accumulation increases downstream", n_dec == 0, f"{n_dec} edges decrease"))
+    return out
+
+
+def check_coverage(df: pd.DataFrame, max_missing: float = 0.05) -> list[Check]:
+    """Missing-data fraction per attribute; small gaps pass but are always reported."""
+    out = []
+    for col in df.columns:
+        n_missing = int(df[col].isna().sum())
+        frac = n_missing / max(1, len(df))
+        detail = f"{n_missing} cell{'' if n_missing == 1 else 's'} missing ({100 * frac:.2f}%)"
+        out.append(Check(f"{col} coverage", frac <= max_missing, detail))
     return out
