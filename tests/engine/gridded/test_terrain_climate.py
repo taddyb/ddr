@@ -129,3 +129,21 @@ class TestSnowfallFraction:
         assert float(
             snowfall_fraction(np.full((12, 1, 1), 1.0), np.full((12, 1, 1), mid))[0, 0]
         ) == pytest.approx(0.5)
+
+
+class TestSlopeFromDataArray:
+    def test_resolution_read_from_coords(self) -> None:
+        """slope_from_dataarray must use the raster's own pixel size, not an assumed one."""
+        from ddr_engine.gridded.terrain import slope_from_dataarray
+
+        res_deg = 1 / 480  # 7.5" (GMTED native), not the 30" global export
+        px_m = 6371000 * np.radians(res_deg)
+        ny, nx = 20, 50
+        elv = np.tile(np.arange(nx) * 0.01 * px_m, (ny, 1))
+        da = xr.DataArray(
+            elv,
+            dims=("y", "x"),
+            coords={"y": np.arange(ny) * -res_deg, "x": np.arange(nx) * res_deg},
+        ).rio.write_crs("EPSG:4326")
+        out = slope_from_dataarray(da)
+        assert float(out.values[10, 25]) == pytest.approx(np.degrees(np.arctan(0.01)), rel=1e-2)

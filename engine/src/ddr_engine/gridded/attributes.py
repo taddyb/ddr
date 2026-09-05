@@ -110,3 +110,29 @@ def table_to_grid(df: pd.DataFrame, grid_shape: tuple[int, int]) -> xr.Dataset:
     lat = LAT0 + np.arange(nrows) * CELL_DEG
     lon = LON0 + np.arange(ncols) * CELL_DEG
     return xr.Dataset(data, coords={"lat": lat, "lon": lon})
+
+
+def blocks(
+    bbox: tuple[float, float, float, float], size: float = 30.0
+) -> list[tuple[float, float, float, float]]:
+    """Tile a bbox into ``size``-degree windows snapped outward to the size grid.
+
+    Global attribute builds process one window at a time so a 30" world raster
+    never has to be held in memory.
+    """
+    xmin, ymin, xmax, ymax = bbox
+    x0, y0 = np.floor(xmin / size) * size, np.floor(ymin / size) * size
+    return [
+        (float(x), float(y), float(x + size), float(y + size))
+        for x in np.arange(x0, np.ceil(xmax / size) * size, size)
+        for y in np.arange(y0, np.ceil(ymax / size) * size, size)
+    ]
+
+
+def cells_in_box(cell_ids: np.typing.ArrayLike, bbox: tuple[float, float, float, float]) -> np.ndarray:
+    """Subset of cell ids whose centres fall in bbox (half-open on the upper edges)."""
+    ids = np.atleast_1d(np.asarray(cell_ids, dtype=np.int64))
+    lat = LAT0 + (ids // NCOLS) * CELL_DEG
+    lon = LON0 + (ids % NCOLS) * CELL_DEG
+    xmin, ymin, xmax, ymax = bbox
+    return ids[(lon >= xmin) & (lon < xmax) & (lat >= ymin) & (lat < ymax)]

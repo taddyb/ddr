@@ -134,3 +134,37 @@ class TestValidRange:
         assert poisoned.loc[JUNIATA_OUTLET, "v"] > 1e6
         clean = extract_cell_attributes({"v": path}, [JUNIATA_OUTLET], valid_range={"v": (0, 100)})
         assert clean.loc[JUNIATA_OUTLET, "v"] == pytest.approx(3.0)
+
+
+class TestBlocks:
+    def test_blocks_tile_the_bbox(self) -> None:
+        from ddr_engine.gridded.attributes import blocks
+
+        # bbox already on the block grid -> exactly the two 10-degree columns
+        bs = blocks((-10.0, 0.0, 10.0, 10.0), size=10.0)
+        assert bs == [(-10.0, 0.0, 0.0, 10.0), (0.0, 0.0, 10.0, 10.0)]
+
+    def test_blocks_snap_outward(self) -> None:
+        from ddr_engine.gridded.attributes import blocks
+
+        bs = blocks((-7.0, -3.0, 3.0, 3.0), size=10.0)
+        assert bs == [
+            (-10.0, -10.0, 0.0, 0.0),
+            (-10.0, 0.0, 0.0, 10.0),
+            (0.0, -10.0, 10.0, 0.0),
+            (0.0, 0.0, 10.0, 10.0),
+        ]
+
+    def test_global_bbox_block_count(self) -> None:
+        from ddr_engine.gridded.attributes import blocks
+
+        assert len(blocks((-180.0, -56.0, 180.0, 84.0), size=30.0)) == 12 * 5
+
+
+class TestCellsInBox:
+    def test_selects_by_centroid(self) -> None:
+        from ddr_engine.gridded.attributes import cells_in_box
+
+        # 138445 centre (40.25, -77.25); 138446 centre (40.25, -76.75)
+        sel = cells_in_box(np.array([138445, 138446]), (-77.5, 40.0, -77.0, 40.5))
+        assert sel.tolist() == [138445]
