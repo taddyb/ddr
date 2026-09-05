@@ -72,3 +72,22 @@ class TestGlwdOpenWater:
         layer = next(e for e in mod.REGISTRY if e.name == "glwd_v2_openwater_pct")
         assert layer.kind == "ic_sum"
         assert layer.indices == tuple(f"GLWD_v2_delta_class_{i:02d}_pct" for i in range(1, 7))
+
+
+class TestGlobalMode:
+    def test_global_bbox_covers_ddm30_grid(self) -> None:
+        xmin, ymin, xmax, ymax = mod.GLOBAL_BBOX
+        assert (xmin, xmax) == (-180.0, 180.0)
+        assert ymin <= -56.0 and ymax >= 84.0  # DDM30 rows span -55.75..83.75
+
+    def test_every_layer_has_a_global_scale(self) -> None:
+        for e in mod.REGISTRY:
+            assert mod.scale_for(e, global_mode=True) > 0
+
+    def test_global_scale_is_coarser_or_equal(self) -> None:
+        for e in mod.REGISTRY:
+            assert mod.scale_for(e, global_mode=True) >= e.scale_m
+
+    def test_conus_scale_unchanged(self) -> None:
+        e = next(x for x in mod.REGISTRY if x.name == "gmted2010_mea")
+        assert mod.scale_for(e, global_mode=False) == e.scale_m

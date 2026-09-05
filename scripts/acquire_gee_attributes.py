@@ -36,6 +36,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 CONUS_BBOX = (-125.0, 24.0, -66.0, 53.0)
+GLOBAL_BBOX = (-180.0, -56.0, 180.0, 84.0)  # DDM30 rows span -55.75..83.75
 DEFAULT_OUT = Path("/mnt/ssd1/data/gridded_attrs/gee")
 
 log = logging.getLogger("acquire_gee_attributes")
@@ -56,14 +57,22 @@ class Layer:
     valid_max: float | None = None  # mask values above this before reducing
     max_requests: int = 32  # lower for compute-heavy reductions (EE concurrency limit)
     max_tile_size: float = 4  # MB per request; lower so heavy reductions finish before geedim's timeout
+    global_scale_m: float | None = None  # export scale for --global (defaults to scale_m)
 
 
 _HHS = "projects/sat-io/open-datasets/HiHydroSoilv2_0"
 
 REGISTRY: list[Layer] = [
-    Layer("gmted2010_mea", "USGS/GMTED2010_FULL", "image", 231.92, band="mea"),
+    Layer("gmted2010_mea", "USGS/GMTED2010_FULL", "image", 231.92, band="mea", global_scale_m=927.67),
     *[
-        Layer(f"hihydrosoil_{var}", f"{_HHS}/{var}", "ic_filter", 250, index=f"{prefix}_0-5cm_M_250m")
+        Layer(
+            f"hihydrosoil_{var}",
+            f"{_HHS}/{var}",
+            "ic_filter",
+            250,
+            index=f"{prefix}_0-5cm_M_250m",
+            global_scale_m=1000,
+        )
         for var, prefix in [
             ("ksat", "Ksat"),
             ("alpha", "ALFA"),
@@ -78,6 +87,7 @@ REGISTRY: list[Layer] = [
         "projects/sat-io/open-datasets/GLWD/GLWD_V2_DELTA_AREA_PCT",
         "image",
         463,
+        global_scale_m=1000,
     ),
     Layer(  # paper's FW = "fraction of open water": lakes, reservoirs, rivers, permanent waterbodies
         "glwd_v2_openwater_pct",
@@ -86,6 +96,7 @@ REGISTRY: list[Layer] = [
         463,
         indices=tuple(f"GLWD_v2_delta_class_{i:02d}_pct" for i in range(1, 7)),
         max_requests=8,
+        global_scale_m=1000,
     ),
     Layer(
         "ndvi_mod13_mean",
@@ -107,6 +118,11 @@ REGISTRY: list[Layer] = [
         max_tile_size=0.5,  # 4 MB tiles: 3 of 4 done in <3 min, the largest timed out at ~30 min
     ),
 ]
+
+
+def scale_for(layer: Layer, global_mode: bool) -> float:
+    """Export scale (m) for a layer: coarser global scale when building the whole DDM30 grid."""
+    return (layer.global_scale_m or layer.scale_m) if global_mode else layer.scale_m
 
 
 def out_path(out_dir: Path, name: str) -> Path:
@@ -145,13 +161,19 @@ def build_ee_image(layer: Layer):  # type: ignore[no-untyped-def] # returns ee.I
     return ic.mean()
 
 
-def download(entries: list[Layer], out_dir: Path, project: str) -> None:
+def download(
+    entries: list[Layer],
+    out_dir: Path,
+    project: str,
+    bbox: tuple[float, float, float, float] = CONUS_BBOX,
+    global_mode: bool = False,
+) -> None:
     """Download each layer as a CONUS GeoTIFF, skipping existing files."""
     import ee
     import geedim as gd
 
     gd.Initialize(project=project)
-    region = ee.Geometry.Rectangle(list(CONUS_BBOX), proj="EPSG:4326", geodesic=False)
+    region = ee.Geometry.Rectangle(list(bbox), proj="EPSG:4326", geodesic=False)
     failed: list[str] = []
     for layer in entries:
         path = out_path(out_dir, layer.name)
@@ -159,12 +181,13 @@ def download(entries: list[Layer], out_dir: Path, project: str) -> None:
             log.info("skip (exists): %s", path.name)
             continue
         path.parent.mkdir(parents=True, exist_ok=True)
-        log.info("downloading %s (%s @ %.0f m)", layer.name, layer.asset, layer.scale_m)
+        scale = scale_for(layer, global_mode)
+        log.info("downloading %s (%s @ %.0f m)", layer.name, layer.asset, scale)
         try:
             gd.MaskedImage(build_ee_image(layer)).download(
                 path,
                 crs="EPSG:4326",
-                scale=layer.scale_m,
+                scale=scale,
                 region=region,
                 max_requests=layer.max_requests,
                 max_tile_size=layer.max_tile_size,
@@ -183,6 +206,12 @@ def main() -> None:
     parser.add_argument("--only", nargs="+", default=None, help="subset of layer names")
     parser.add_argument("--out", type=Path, default=DEFAULT_OUT)
     parser.add_argument(
+        "--global",
+        dest="global_mode",
+        action="store_true",
+        help="export the whole DDM30 extent at each layer's coarser global scale",
+    )
+    parser.add_argument(
         "--project",
         default=os.environ.get("EARTHENGINE_PROJECT"),
         help="GEE-registered Google Cloud project (or set EARTHENGINE_PROJECT)",
@@ -191,7 +220,8 @@ def main() -> None:
     if not args.project:
         parser.error("--project (or EARTHENGINE_PROJECT) is required")
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-    download(select_entries(args.only), args.out, args.project)
+    bbox = GLOBAL_BBOX if args.global_mode else CONUS_BBOX
+    download(select_entries(args.only), args.out, args.project, bbox, args.global_mode)
 
 
 if __name__ == "__main__":
