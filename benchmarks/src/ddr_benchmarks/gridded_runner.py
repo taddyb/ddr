@@ -159,10 +159,51 @@ def run_conus_benchmark(
     # --- lateral inflow: daily Qr summed per cell, repeated to hourly ---
     qp_daily = _aggregate_qprime(paths, comid_cell, node_pos, order, pos_to_c, pos, start, end)
 
-    # --- route ---
+    return _route_and_score(
+        paths,
+        root,
+        node_pos,
+        adjacency,
+        dn_c,
+        qp_daily,
+        gauges,
+        outflow_idx,
+        obs_ds,
+        start,
+        end,
+        n_manning,
+        q_spatial,
+        time.time(),
+    )
+
+
+def _route_and_score(  # type: ignore[no-untyped-def] # zarr/torch/xarray objects, lazily imported
+    paths: GriddedPaths,
+    root,
+    node_pos,
+    adjacency,
+    dn_c,
+    qp_daily,
+    gauges,
+    outflow_idx,
+    obs_ds,
+    start: str,
+    end: str,
+    n_manning: float,
+    q_spatial: float,
+    _t0: float,
+) -> dict:
+    """Route the prepared network and score it against observations."""
+    import time
+
+    import numpy as np
+    import torch
+
     from ddr.geodatazoo.dataclasses import RoutingDataclass
     from ddr.routing.torch_mc import dmc
+    from ddr_benchmarks.gridded import topo_accumulate
 
+    n = len(node_pos)
     rd = RoutingDataclass(
         adjacency_matrix=adjacency,
         length=torch.tensor(root["length_m"][:][node_pos], dtype=torch.float32),
@@ -234,3 +275,114 @@ def _aggregate_qprime(
     node_idx = contributing.cell.map(cell_to_node).values
     np.add.at(qp.T, node_idx, np.nan_to_num(qr))
     return qp
+
+
+def run_subreach_benchmark(
+    paths: GriddedPaths,
+    subreach_zarr: Path,
+    qprime_icechunk: Path,
+    start: str = "1995-10-01",
+    end: str = "1996-09-30",
+    n_manning: float = 0.05,
+    q_spatial: float = 0.4,
+    min_da_km2: float = 5000.0,
+    min_obs_coverage: float = 0.9,
+) -> dict:
+    """Same benchmark on a sub-reach network built by scripts/build_subdivided_adjacency.py.
+
+    Each cell's lateral inflow is split evenly across its sub-reaches (mass
+    conserving), and a gauge reads the cell's most downstream sub-reach, which
+    carries the whole cell's accumulated flow. Q' comes from the area-weighted
+    regridded store rather than flowline-midpoint assignment.
+    """
+    import time
+
+    import numpy as np
+    import pandas as pd
+    import torch
+    import zarr
+
+    from ddr_benchmarks.gridded import cell_areas_km2, downstream_closure, snap_gauges, topo_accumulate
+
+    t0 = time.time()
+    root = zarr.open_group(store=str(subreach_zarr), mode="r")
+    node_ids, parent = root["order"][:], root["parent_cell"][:]
+    rows_g, cols_g = root["indices_0"][:], root["indices_1"][:]
+    dn = np.full(len(node_ids), -1, dtype=np.int64)
+    dn[cols_g] = rows_g
+
+    # node area = its share of the parent cell; accumulating gives upstream area per node
+    _, inverse, counts = np.unique(parent, return_inverse=True, return_counts=True)
+    k_per_node = counts[inverse]
+    node_area = cell_areas_km2(root["lat"][:]) / k_per_node
+    upstream_area_all = topo_accumulate(node_area, dn)
+
+    qp_ds = _open_icechunk(qprime_icechunk)
+    forced_cells = {int(c) for c in qp_ds.divide_id.values}
+    forced_pos = np.array(sorted(i for i, p in enumerate(parent) if int(p) in forced_cells))
+    node_pos = downstream_closure(forced_pos, dn)
+    n = len(node_pos)
+    pos_to_c = {int(p): i for i, p in enumerate(node_pos)}
+
+    mask = np.isin(rows_g, node_pos) & np.isin(cols_g, node_pos)
+    r_c = np.array([pos_to_c[p] for p in rows_g[mask]])
+    c_c = np.array([pos_to_c[p] for p in cols_g[mask]])
+    adjacency = torch.sparse_coo_tensor(
+        np.stack([r_c, c_c]), torch.ones(len(r_c)), size=(n, n)
+    ).to_sparse_csr()
+    dn_c = np.full(n, -1, dtype=np.int64)
+    dn_c[c_c] = r_c
+
+    # a cell's outlet is its most downstream sub-reach: the one with the largest sub index
+    sub_idx = node_ids % 1000
+    outlet_of_cell: dict[int, int] = {}
+    for p in node_pos:
+        cell = int(parent[p])
+        if cell not in outlet_of_cell or sub_idx[p] > sub_idx[outlet_of_cell[cell]]:
+            outlet_of_cell[cell] = int(p)
+    upstream_area = {c: float(upstream_area_all[p]) for c, p in outlet_of_cell.items()}
+
+    gauges = pd.read_csv(paths.gages_csv, dtype={"STAID": str})
+    gauges["STAID"] = gauges.STAID.str.zfill(8)
+    gauges = gauges[gauges.DRAIN_SQKM > min_da_km2]
+    gauges = snap_gauges(gauges, upstream_area)
+    obs_ds = _open_icechunk(paths.obs_icechunk)
+    obs_ids = set(obs_ds.gage_id.values.astype(str))
+    gauges = gauges[gauges.STAID.isin(obs_ids)]
+    coverage = (
+        obs_ds["streamflow"]
+        .sel(gage_id=gauges.STAID.tolist(), time=slice(start, end))
+        .notnull()
+        .mean("time")
+        .values
+    )
+    gauges = gauges[coverage > min_obs_coverage]
+    outflow_idx = [np.array([pos_to_c[outlet_of_cell[int(c)]]]) for c in gauges.cell]
+
+    # lateral inflow: each cell's daily Q' split evenly across its sub-reaches
+    qr = qp_ds["Qr"].sel(time=slice(start, end)).transpose("time", "divide_id")
+    qr_cells = qr.divide_id.values.astype(np.int64)
+    col_of_cell = {int(c): j for j, c in enumerate(qr_cells)}
+    qp_daily = np.zeros((qr.shape[0], n), dtype=np.float32)
+    qr_vals = np.nan_to_num(qr.values)
+    for p in node_pos:
+        j = col_of_cell.get(int(parent[p]))
+        if j is not None:
+            qp_daily[:, pos_to_c[int(p)]] = qr_vals[:, j] / k_per_node[p]
+
+    return _route_and_score(
+        paths,
+        root,
+        node_pos,
+        adjacency,
+        dn_c,
+        qp_daily,
+        gauges,
+        outflow_idx,
+        obs_ds,
+        start,
+        end,
+        n_manning,
+        q_spatial,
+        t0,
+    )
