@@ -147,3 +147,26 @@ class TestSlopeFromDataArray:
         ).rio.write_crs("EPSG:4326")
         out = slope_from_dataarray(da)
         assert float(out.values[10, 25]) == pytest.approx(np.degrees(np.arctan(0.01)), rel=1e-2)
+
+
+class TestAridity:
+    def test_uses_precipitation_floor(self) -> None:
+        """Aridity must stay finite where WorldClim rounds annual precipitation to ~0."""
+        from ddr_engine.gridded.climate import MIN_P_MM_YR, aridity_index
+
+        a = aridity_index(np.array([1000.0, 1000.0, 1000.0]), np.array([500.0, 0.0, 0.0004]))
+        assert a[0] == pytest.approx(2.0)
+        assert np.isfinite(a).all()
+        assert a[1] == pytest.approx(1000.0 / MIN_P_MM_YR)
+        assert a[2] == pytest.approx(1000.0 / MIN_P_MM_YR)
+
+    def test_monotone_in_precipitation(self) -> None:
+        from ddr_engine.gridded.climate import aridity_index
+
+        a = aridity_index(np.full(3, 1000.0), np.array([100.0, 500.0, 2000.0]))
+        assert a[0] > a[1] > a[2]
+
+    def test_nan_precipitation_propagates(self) -> None:
+        from ddr_engine.gridded.climate import aridity_index
+
+        assert np.isnan(aridity_index(np.array([1000.0]), np.array([np.nan])))[0]

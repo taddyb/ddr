@@ -32,7 +32,7 @@ CATCHMENTS = Path("/mnt/ssd1/data/merit/cat_pfaf_7_MERIT_Hydro_v07_Basins_v01_bu
 QR_STORE = "/mnt/ssd1/data/icechunk/merit_dhbv2_UH_retrospective.ic"
 ADJACENCY = Path("data/ddm30/ddm30_adjacency.zarr")
 WEIGHTS_CACHE = Path("data/ddm30/catchment_cell_weights.parquet")
-OUT = Path("/mnt/ssd1/data/icechunk/ddm30_conus_qprime.ic")
+OUT = Path("/mnt/ssd1/data/icechunk/ddm30_conus_uh_retrospective_regridded.ic")
 CHUNK_DAYS = 1826  # ~5 years per pass
 
 log = logging.getLogger("build_gridded_qprime")

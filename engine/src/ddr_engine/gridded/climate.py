@@ -63,3 +63,19 @@ def snowfall_fraction(prec: np.ndarray, temp: np.ndarray) -> np.ndarray:
     share = np.clip((RAIN_C - np.asarray(temp, dtype=float)) / (RAIN_C - SNOW_C), 0, 1)
     with np.errstate(divide="ignore", invalid="ignore"):
         return (prec * share).sum(axis=0) / prec.sum(axis=0)
+
+
+MIN_P_MM_YR = 1.0  # WorldClim reports annual precipitation as integer mm; below 1 mm is unresolved
+
+
+def aridity_index(pet_mm_yr: np.ndarray, prec_mm_yr: np.ndarray) -> np.ndarray:
+    """Aridity = PET / P with a precipitation floor at the data's resolution.
+
+    Hyper-arid cells (Sahara, Atacama) round to 0 mm/yr in WorldClim, and cell means
+    over mostly-zero pixels can land at ~1e-4 mm/yr, which makes a raw PET/P ratio
+    infinite or absurd (2.4e6 was observed globally). Flooring P at
+    ``MIN_P_MM_YR`` keeps the index finite and monotone while preserving the
+    ordering that makes it useful: the driest cells still score highest.
+    """
+    prec = np.asarray(prec_mm_yr, dtype=float)
+    return np.asarray(pet_mm_yr, dtype=float) / np.maximum(prec, MIN_P_MM_YR)

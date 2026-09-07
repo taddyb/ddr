@@ -61,7 +61,7 @@ UNITS: dict[str, Spec] = {
     "meanP": Spec("mm/year", 0, 13000),
     "meanTa": Spec("degC", -60, 45),
     "ETPOT_Hargr": Spec("mm/year", 0, 4000),
-    "aridity": Spec("-", 0, 2000),
+    "aridity": Spec("-", 0, 5000),  # PET/P with P floored at 1 mm/yr; Sahara core reaches ~2300
     "seasonality_P": Spec("-", 0, 1.834),
     "seasonality_PET": Spec("-", 0, 1.834),
 }
@@ -98,7 +98,11 @@ def check_attribute_consistency(df: pd.DataFrame, tol: float = 1e-3) -> list[Che
         bad = int((df["WCpF2"] > df["WCsat"] + tol).sum())
         out.append(Check("WCpF2 <= WCsat", bad == 0, f"{bad} cells with field capacity above saturation"))
     if {"aridity", "ETPOT_Hargr", "meanP"} <= set(df):
-        expect = df["ETPOT_Hargr"] / df["meanP"]
+        from .climate import aridity_index
+
+        expect = pd.Series(
+            aridity_index(df["ETPOT_Hargr"].to_numpy(), df["meanP"].to_numpy()), index=df.index
+        )
         bad = int((np.abs(expect - df["aridity"]) > 1e-6 * np.maximum(1.0, expect)).sum())
         out.append(Check("aridity = PET/P", bad == 0, f"{bad} cells violate the identity"))
     if {"log10_uparea", "catchsize"} <= set(df):

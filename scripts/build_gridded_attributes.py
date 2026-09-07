@@ -51,6 +51,7 @@ from ddr_engine.gridded.attributes import (
     table_to_grid,
 )
 from ddr_engine.gridded.climate import (
+    aridity_index,
     hargreaves_pet_monthly_mm,
     seasonality_index,
     snowfall_fraction,
@@ -171,7 +172,7 @@ def block_climate(polys: gpd.GeoDataFrame, bbox: tuple[float, float, float, floa
             **{k: extract_from_dataarray(mean_ta.copy(data=v), polys) for k, v in derived.items()},
         }
     )
-    df["aridity"] = df["ETPOT_Hargr"] / df["meanP"]
+    df["aridity"] = aridity_index(df["ETPOT_Hargr"].to_numpy(), df["meanP"].to_numpy())
     return df
 
 
