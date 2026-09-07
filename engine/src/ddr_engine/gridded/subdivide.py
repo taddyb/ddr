@@ -21,7 +21,8 @@ from dataclasses import dataclass
 import numpy as np
 
 TARGET_M = 6000.0  # Courant ~1 at dt=3600 s for celerity ~1.7 m/s
-SUB_ID_STRIDE = 100  # node id = parent cell id * STRIDE + sub index (max k is ~13)
+SUB_ID_STRIDE = 1000  # node id = parent cell id * STRIDE + sub index
+MIN_REACH_M = 1000.0  # a sub-kilometre "reach" of a 0.5-degree cell is not meaningful
 
 
 @dataclass(frozen=True)
@@ -92,7 +93,11 @@ def subdivide_network(
 
 
 def courant_matched_counts(
-    length_m: np.ndarray, celerity_m_s: np.ndarray, dt_s: float = 3600.0
+    length_m: np.ndarray,
+    celerity_m_s: np.ndarray,
+    dt_s: float = 3600.0,
+    fallback_target_m: float = TARGET_M,
+    min_reach_m: float = MIN_REACH_M,
 ) -> np.ndarray:
     """Sub-reach count that puts each cell's Courant number nearest 1.
 
@@ -104,5 +109,8 @@ def courant_matched_counts(
     """
     length = np.asarray(length_m, dtype=float)
     c = np.asarray(celerity_m_s, dtype=float)
-    ideal = np.where(np.isfinite(c) & (c > 0), c * dt_s, np.inf)
-    return np.maximum(1, np.rint(length / ideal)).astype(np.int64)
+    known = np.isfinite(c) & (c > 0)
+    ideal = np.where(known, c * dt_s, fallback_target_m)
+    k = np.maximum(1, np.rint(length / ideal))
+    k_max = np.maximum(1, np.floor(length / min_reach_m))  # keep reaches physically meaningful
+    return np.minimum(k, k_max).astype(np.int64)

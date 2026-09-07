@@ -104,8 +104,16 @@ class TestCourantMatchedCounts:
 
         assert courant_matched_counts(np.array([500.0]), np.array([2.0]), dt_s=3600.0).tolist() == [1]
 
-    def test_non_finite_celerity_falls_back_to_one(self) -> None:
+    def test_unknown_celerity_falls_back_to_the_fixed_target(self) -> None:
+        """Cells without a discharge estimate must still be split, not left at 42 km."""
         from ddr_engine.gridded.subdivide import courant_matched_counts
 
         k = courant_matched_counts(np.array([42434.0, 42434.0]), np.array([np.nan, 0.0]), dt_s=3600.0)
-        assert k.tolist() == [1, 1]
+        assert k.tolist() == [7, 7]  # round(42434 / 6000)
+
+    def test_reaches_never_shorter_than_the_floor(self) -> None:
+        from ddr_engine.gridded.subdivide import MIN_REACH_M, courant_matched_counts
+
+        # celerity 0.01 m/s would ask for 36 m reaches
+        k = courant_matched_counts(np.array([42434.0]), np.array([0.01]), dt_s=3600.0)
+        assert 42434.0 / k[0] >= MIN_REACH_M
