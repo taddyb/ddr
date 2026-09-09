@@ -97,6 +97,30 @@ See [`examples/juniata_gridded/README.md`](examples/juniata_gridded/README.md) t
 [`docs/gridded_data.md`](docs/gridded_data.md) to obtain every input, and
 [`docs/gridded_methods.md`](docs/gridded_methods.md) for how it works.
 
+#### How the gauges are selected
+
+Grid resolution decides which gauges are usable, so selection is a filter chain rather
+than a choice. A 0.5-degree cell is about 2,350 km², so a basin smaller than one routing
+element cannot be represented at all. Starting from `references/gage_info/gages_3000.csv`:
+
+| Step | Gauges | Why |
+|---|---|---|
+| In `gages_3000.csv` | 3,211 | the standard training set |
+| Drainage area > 2,000 km² | 890 | 2,416 gauges are sub-cell and cannot be resolved |
+| Snap within area tolerance | 667 | 3×3 drainage-area match, median ratio 1.01 |
+| Observation coverage > 90% | 620 | usable over the evaluation period |
+
+Snapping searches the 3×3 cell neighbourhood around the gauge coordinate and keeps the
+cell minimising `|log(cell_upstream_area / gauge_drainage_area)|`, accepting ratios in
+[0.7, 1.4] and taking the better gauge when two land in the same cell. Assigning each
+gauge to the nearest cell centre instead was tested and rejected: it misplaced roughly
+half of the large gauges, in one case by a factor of 201 in drainage area, because a
+gauge near a cell edge often sits closest to a cell its river never enters.
+
+Raise the threshold with `--min-da-km2` if you want a stricter set; above 5,000 km² gives
+337 gauges. The remaining area mismatch is corrected by scaling predictions by the inverse
+of the drainage-area ratio, applied identically in training and evaluation.
+
 The lateral inflow and the attribute set both come from the high-resolution CONUS dataset
 of Song, Bindas et al. (2025) — the dHBV2.0 differentiable model that provides 40 years of
 daily runoff for ~180,000 MERIT unit catchments, and whose attribute tables define the
