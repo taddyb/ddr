@@ -111,11 +111,24 @@ element cannot be represented at all. Starting from `references/gage_info/gages_
 | Observation coverage > 90% | 620 | usable over the evaluation period |
 
 Snapping searches the 3×3 cell neighbourhood around the gauge coordinate and keeps the
-cell minimising `|log(cell_upstream_area / gauge_drainage_area)|`, accepting ratios in
-[0.7, 1.4] and taking the better gauge when two land in the same cell. Assigning each
-gauge to the nearest cell centre instead was tested and rejected: it misplaced roughly
-half of the large gauges, in one case by a factor of 201 in drainage area, because a
-gauge near a cell edge often sits closest to a cell its river never enters.
+cell minimising `|log(cell_upstream_area / gauge_drainage_area)|`, taking the better gauge
+when two land in the same cell. Assigning each gauge to the nearest cell centre instead
+was tested and rejected: it misplaced roughly half of the large gauges, in one case by a
+factor of 201 in drainage area, because a gauge near a cell edge often sits closest to a
+cell its river never enters.
+
+The area tolerance is `DA_TOLERANCE = (0.7, 1.4)` in `ddr_benchmarks.gridded`, bounding
+the ratio of the cell's accumulated area to the gauge's reported drainage area. A gauge
+survives only if its best-matching cell drains between 70% and 140% of the reported
+basin. The bounds look lopsided but are nearly symmetric in the space the matching works
+in, since log(0.7) = −0.357 and log(1.4) = +0.336 sit the same distance either side of a
+perfect match. That matters because drainage area is multiplicative: a cell draining twice
+too much and one draining half as much are equally wrong, which a linear window would not
+capture. The tolerance rejects rather than constrains — the search always returns its
+closest match, and the tolerance then discards it if even that is too far off. It is not
+binding for large basins, where the median accepted ratio is 1.01, but bites near the
+resolution floor, where a single cell is a large fraction of the basin. Override it per
+call with `snap_gauges(..., tolerance=...)`.
 
 Raise the threshold with `--min-da-km2` if you want a stricter set; above 5,000 km² gives
 337 gauges. The remaining area mismatch is corrected by scaling predictions by the inverse
