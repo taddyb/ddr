@@ -137,6 +137,14 @@ than nodata over permanent water, so cells whose three texture fractions sum to 
 set to missing, which brought them into agreement with HiHydroSoil. Rasters retrieved
 through Google Earth Engine carry a trailing fill-mask band that must be skipped.
 
+![Learned parameter fields over the DDM30 grid](images/gridded/conus_parameter_maps.png)
+
+**Figure 1.** Channel parameters predicted from the attributes of Table 1, averaged to
+their 0.5° cell, after 45 training epochs. Colour scales are clipped to the 2nd and 98th
+percentiles. Roughness is highest on the Gulf and Atlantic coastal plains and lowest along
+major river corridors, a pattern the network infers from attributes alone rather than from
+any spatial prior.
+
 ### 3.2 Products
 
 Attributes were written in three forms from a single build: a NetCDF file indexed by cell
@@ -233,6 +241,13 @@ Sub-reaches inherit their parent cell's attributes, with the exception of upstre
 which is recomputed per reach from accumulated area so that the network sees variation
 within a cell.
 
+![Parameter relations](images/gridded/conus_parameter_relations.png)
+
+**Figure 6.** Learned parameters against upstream area and channel slope, with their
+distributions across all reaches. The network resolves a continuous range rather than a
+single value, which is the behaviour a continental attribute set is meant to produce and
+which a four-cell basin cannot.
+
 Training minimises the mean absolute error between routed and observed daily discharge
 over randomly sampled 90-day windows, with the first five days excluded as warm-up.
 Gradients propagate through the routing solve to the network weights. Optimisation used
@@ -249,6 +264,12 @@ accumulated downstream through the network without routing physics. This baselin
 relevant control: a routing model that does not exceed it has not demonstrated that its
 learned parameters do any work, regardless of its absolute skill.
 
+![Juniata hydrograph](images/gridded/juniata_hydrograph.png)
+
+**Figure 2.** Routed and unrouted discharge against observation at USGS 01567000 over the
+held-out period, with water year 1996 enlarged below. The gridded network reproduces
+recession behaviour that the summed-inflow baseline, which has no routing physics, cannot.
+
 **Table 2.** Held-out performance. Juniata results are for a single gauge over 1995–2010;
 continental results are medians across 620 gauges over 1995–1997.
 
@@ -256,6 +277,12 @@ continental results are medians across 620 gauges over 1995–1997.
 |---|---|---|---|---|
 | Juniata (USGS 01567000), trained 30 epochs | 27 | 0.795 | 0.594 | 0.737 |
 | Conterminous United States, trained 45 epochs | 91,867 | 0.542 | 0.390 | 0.618 |
+
+![Continental metrics](images/gridded/conus_metrics.png)
+
+**Figure 5.** Distribution of efficiency across the 620 continental gauges: cumulative
+distribution against the baseline, the per-gauge difference between them, efficiency
+grouped by basin size, and the spatial pattern.
 
 Routing exceeded the baseline at 81% of continental gauges, and 336 of 620 gauges reached
 an efficiency above 0.5. Skill increases with basin size, from a median near 0.39 for
@@ -283,12 +310,26 @@ Three limitations bear on interpretation of learned parameters. The roughness
 parameterization initialises at the midpoint of its bounds, 0.111, which is a floodplain
 rather than a channel value; after 45 epochs the median settles near 0.127 but the
 interdecile range presses the upper bound, indicating that the parameter is absorbing
-error it cannot otherwise fit. The implied downstream hydraulic geometry is inconsistent
+error it cannot otherwise fit (Figure 3). The implied downstream hydraulic geometry is inconsistent
 with observation, with a width exponent near zero against an expected value of
 approximately 0.5 and a depth exponent of 0.75 against approximately 0.4, which follows
-from an objective that constrains discharge but not channel shape. Finally, basins near the
+from an objective that constrains discharge but not channel shape (Figure 4). Finally, basins near the
 resolution limit are represented by one or two routing elements, so skill in the smallest
 size class reflects discretization as much as parameterization.
+
+![Parameter convergence](images/gridded/conus_convergence.png)
+
+**Figure 3.** Median and interdecile range of each parameter across all 91,867 reaches
+against training epoch, with mean training loss. The medians stabilise, but the ranges
+widen for the whole run and reach the bounds of roughness and the depth exponent, which is
+the signature of a parameter compensating for error rather than converging.
+
+![Channel geometry implied by the learned parameters](images/gridded/conus_channel_geometry.png)
+
+**Figure 4.** Top width, depth, and their ratio against upstream area, computed from the
+learned parameters at an area-scaled reference discharge. The shaded band marks the width
+to depth ratio of natural channels. Depth increases too steeply with discharge and width
+barely increases at all, so the largest rivers are rendered deep and narrow.
 
 ## References
 

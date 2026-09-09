@@ -84,6 +84,26 @@ This creates two files used for routing:
 - `hydrofabric_v2.2_conus_adjacency.zarr` — sparse COO matrix of the full CONUS river network
 - `hydrofabric_v2.2_gages_conus_adjacency.zarr` — zarr.Group of sparse COO matrices for networks upstream of USGS gauges
 
+### Gridded (ISIMIP DDM30) routing
+
+DDR also routes on the ISIMIP3b DDM30 0.5-degree drainage-direction grid instead of vector
+flowlines. A self-contained sample runs with no external data:
+
+```sh
+uv run python examples/juniata_gridded/train_gridded.py --epochs 30
+```
+
+See [`examples/juniata_gridded/README.md`](examples/juniata_gridded/README.md) to run it,
+[`docs/gridded_data.md`](docs/gridded_data.md) to obtain every input, and
+[`docs/gridded_methods.md`](docs/gridded_methods.md) for how it works.
+
+The lateral inflow and the attribute set both come from the high-resolution CONUS dataset
+of Song, Bindas et al. (2025) — the dHBV2.0 differentiable model that provides 40 years of
+daily runoff for ~180,000 MERIT unit catchments, and whose attribute tables define the
+predictors used by the routing parameterization. The dataset is archived at
+[10.5281/zenodo.13774373](https://doi.org/10.5281/zenodo.13774373) and the paper at
+[10.1029/2024WR038928](https://doi.org/10.1029/2024WR038928); see the citation below.
+
 ### Pre-trained Examples
 
 The `examples/` directory contains pre-trained weights and notebooks for both
