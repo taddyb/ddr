@@ -10,7 +10,9 @@ recomputed per reach from the accumulated area, so the KAN sees within-cell vari
 Attributes are normalised with CONUS-wide statistics so learned parameters are
 comparable to a CONUS run.
 
-Writes per-epoch parameters, predictions and metrics to ``--out`` for the eval plots.
+All inputs ship in ``examples/juniata_gridded/data`` (1.6 MB); nothing external is
+needed. Writes per-epoch parameters, predictions and metrics to ``--out`` for the
+eval plots. See README.md to run it and docs/gridded_data.md to rebuild the inputs.
 
 Usage:
     uv run python examples/juniata_gridded/train_gridded.py --epochs 30
@@ -32,10 +34,7 @@ import zarr
 JUNIATA_CELLS = (139163, 138443, 138444, 138445)
 GAGE = "01567000"
 GAGE_DA_KM2 = 8657.0
-SUBREACH = Path("data/ddm30/ddm30_subreach_adjacency.zarr")
-ATTRS = Path("/mnt/ssd1/data/icechunk/ddm30_conus_attributes.nc")
-QPRIME = Path("/mnt/ssd1/data/icechunk/ddm30_conus_uh_retrospective_regridded.ic")
-OBS = Path("/mnt/ssd1/data/icechunk/usgs_daily_observations")
+BUNDLE = Path(__file__).parent / "data"  # self-contained inputs, see README.md
 KAN_INPUTS = [
     "SoilGrids1km_clay",
     "aridity",
@@ -53,51 +52,44 @@ LEARNABLE = ["n", "q_spatial", "p_spatial"]
 log = logging.getLogger("train_gridded")
 
 
-def build_network() -> dict:
+def build_network(bundle: Path = BUNDLE) -> dict:
     """Juniata sub-reach network, attributes, forcing and observations."""
     from ddr_benchmarks.gridded import cell_areas_km2, topo_accumulate
 
     from ddr.io.readers import read_ic
 
-    g = zarr.open_group(str(SUBREACH), mode="r")
-    parent_all = g["parent_cell"][:]
-    keep = np.isin(parent_all, JUNIATA_CELLS)
-    pos = np.flatnonzero(keep)
-    local = {int(p): i for i, p in enumerate(pos)}
-    n = len(pos)
-
-    rows_g, cols_g = g["indices_0"][:], g["indices_1"][:]
-    m = np.isin(rows_g, pos) & np.isin(cols_g, pos)
-    r = np.array([local[int(x)] for x in rows_g[m]])
-    c = np.array([local[int(x)] for x in cols_g[m]])
+    g = zarr.open_group(str(bundle / "juniata_subreach_adjacency.zarr"), mode="r")
+    parent = g["parent_cell"][:]
+    n = len(g["order"][:])
+    pos = np.arange(n)  # the bundle is already reindexed to 0..n-1
+    r, c = g["indices_0"][:].astype(np.int64), g["indices_1"][:].astype(np.int64)
     assert (r > c).all(), "sub-network must stay lower-triangular"
     adjacency = torch.sparse_coo_tensor(np.stack([r, c]), torch.ones(len(r)), size=(n, n)).to_sparse_csr()
 
-    parent = parent_all[pos]
-    _, inv, cnt = np.unique(parent_all, return_inverse=True, return_counts=True)
-    k_per_node = cnt[inv][pos]
-    area = cell_areas_km2(g["lat"][:][pos]) / k_per_node
+    _, inv, cnt = np.unique(parent, return_inverse=True, return_counts=True)
+    k_per_node = cnt[inv]
+    area = cell_areas_km2(g["lat"][:]) / k_per_node
     dn_local = np.full(n, -1, dtype=np.int64)
     dn_local[c] = r
     uparea = topo_accumulate(area, dn_local)
     outlet = int(np.argmax(uparea))
 
     # attributes: parent cell's values, with per-reach accumulated area
-    ds = xr.open_dataset(ATTRS)
+    ds = xr.open_dataset(bundle / "ddm30_conus_attributes.nc")
     conus = ds[KAN_INPUTS].to_dataframe()
     rows = conus.loc[[int(p) for p in parent]].reset_index(drop=True)
     rows["log10_uparea"] = np.log10(uparea)
     stats = conus.describe().loc[["mean", "std"]]  # CONUS-wide normalisation
     normalized = ((rows - stats.loc["mean"]) / stats.loc["std"].replace(0, 1)).fillna(0.0)
 
-    qp = read_ic(str(QPRIME))
+    qp = read_ic(str(bundle / "juniata_qprime.ic"))
     qr = qp["Qr"].sel(divide_id=[int(p) for p in np.unique(parent)]).transpose("time", "divide_id")
     col = {int(cid): j for j, cid in enumerate(qr.divide_id.values)}
     qvals = np.nan_to_num(qr.values)
     q_prime = np.stack([qvals[:, col[int(p)]] / k_per_node[i] for i, p in enumerate(parent)], axis=1)
     times = pd.to_datetime(qr.time.values)
 
-    obs_ds = read_ic(str(OBS))
+    obs_ds = read_ic(str(bundle / "juniata_obs.ic"))
     obs = obs_ds["streamflow"].sel(gage_id=GAGE)
     return {
         "n": n,
@@ -144,7 +136,7 @@ def _slice(net: dict, start: str, end: str) -> tuple[np.ndarray, np.ndarray]:
     return net["q_prime"][m], obs
 
 
-def run(epochs: int, rho: int, warmup: int, lr: float, seed: int, out: Path) -> None:
+def run(epochs: int, rho: int, warmup: int, lr: float, seed: int, out: Path, bundle: Path) -> None:
     """Train, test, and dump everything the eval plots need."""
     from ddr.geodatazoo.dataclasses import RoutingDataclass
     from ddr.nn.kan import kan
@@ -152,7 +144,7 @@ def run(epochs: int, rho: int, warmup: int, lr: float, seed: int, out: Path) -> 
     from ddr.validation.metrics import Metrics
 
     torch.manual_seed(seed)
-    net = build_network()
+    net = build_network(bundle)
     n = net["n"]
     log.info("network: %d sub-reaches over %d cells, outlet reach %d", n, len(JUNIATA_CELLS), net["outlet"])
 
@@ -298,9 +290,10 @@ def main() -> None:
     p.add_argument("--lr", type=float, default=1e-3)
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--out", type=Path, default=Path("examples/juniata_gridded/runs/latest"))
+    p.add_argument("--bundle", type=Path, default=BUNDLE)
     a = p.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-    run(a.epochs, a.rho, a.warmup, a.lr, a.seed, a.out)
+    run(a.epochs, a.rho, a.warmup, a.lr, a.seed, a.out, a.bundle)
 
 
 if __name__ == "__main__":
