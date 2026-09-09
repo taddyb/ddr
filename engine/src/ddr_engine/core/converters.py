@@ -105,15 +105,55 @@ class LynkerOrderConverter:
         return [f"wb-{n}" for n in order.tolist()]
 
 
+class GridCellOrderConverter:
+    """Converter for gridded flat cell indices (``id = row * ncols + col``).
+
+    Cell IDs are already integers (int32-safe for any global 0.5-degree grid),
+    so both directions are identity conversions.
+    """
+
+    def to_zarr(self, cell_ids: list[int]) -> NDArray[np.int32]:
+        """Convert flat cell-index list to zarr order array.
+
+        Parameters
+        ----------
+        cell_ids : list[int]
+            List of flat cell indices.
+
+        Returns
+        -------
+        NDArray[np.int32]
+            Array of cell indices as int32.
+        """
+        return np.array(cell_ids, dtype=np.int32)
+
+    def from_zarr(self, order: NDArray[np.int32]) -> Any:
+        """Convert zarr order array back to flat cell-index list.
+
+        Parameters
+        ----------
+        order : NDArray[np.int32]
+            Array of cell indices from zarr.
+
+        Returns
+        -------
+        Any
+            List of flat cell indices.
+        """
+        return order.tolist()
+
+
 # Convenience instances
 merit_converter = MeritOrderConverter()
 lynker_converter = LynkerOrderConverter()
+grid_converter = GridCellOrderConverter()
 
 # Geodataset registry - maps geodataset names to converter instances
 _GEODATASET_REGISTRY: dict[str, OrderConverter] = {
     "merit": merit_converter,
     "lynker": lynker_converter,
     "hydrofabric_v2.2": lynker_converter,  # Alias for lynker
+    "ddm30": grid_converter,
 }
 
 
