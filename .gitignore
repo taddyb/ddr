@@ -208,7 +208,9 @@ examples/juniata_gridded/data/statistics/
 examples/scratch
 
 # claude (keep .claude/ private, commit project-level CLAUDE.md)
-.claude/
+.claude/*
+# ...but the skills library is documentation and must stay committed (see projects/CLAUDE.md)
+!.claude/skills/
 
 # LLM-maintained wiki (derived from src/, rebuilt by agent on demand)
 wiki/
