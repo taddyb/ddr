@@ -126,14 +126,42 @@ polygon overlay runs once.
 
 ## 4. Observations and gauges
 
-USGS daily observations in an icechunk store with `streamflow(gage_id, time)`, and a
-gauge CSV in the `gages_3000.csv` schema. Gauges are snapped to cells by a 3×3
-drainage-area match; naive nearest-centre snapping misplaces about half of large gauges.
+Two inputs: USGS daily observations in an icechunk store with `streamflow(gage_id, time)`,
+and a gauge CSV in the `gages_3000.csv` schema.
+
+### Selection
+
+`ddr_benchmarks.gridded.snap_gauges` does the matching, and `train_conus.py` applies the
+filters. The chain, with the counts from the shipped runs:
+
+| Step | Gauges | Control |
+|---|---|---|
+| In `gages_3000.csv` | 3,211 | — |
+| Drainage area > 2,000 km² | 890 | `--min-da-km2` |
+| Snap within area tolerance | 667 | `DA_TOLERANCE` in `ddr_benchmarks.gridded` |
+| Observation coverage > 90% | 620 | `min_cov` in `build_network`, currently fixed at 0.9 |
+
+Snapping searches the 3×3 cell neighbourhood of the gauge coordinate and keeps the cell
+that minimises `|log(cell_upstream_area / gauge_drainage_area)|`, where the cell's upstream
+area is the topological accumulation of cell areas over the DDM30 network. Candidates
+outside a ratio of [0.7, 1.4] are dropped, and when two gauges snap to the same cell the
+one with the smaller log error wins. Median accepted ratio is 1.01.
 
 !!! warning "A 0.5° cell is about 2,350 km²"
-    Basins smaller than one cell cannot be represented. Of the 3,211 gauges in
-    `gages_3000.csv`, 2,416 are sub-cell. Training uses the 620 above 2,000 km² that
-    snap within drainage-area tolerance.
+    A basin smaller than one routing element cannot be represented. 2,416 of the 3,211
+    gauges are sub-cell. This is a property of the grid, not a tunable threshold: lowering
+    `--min-da-km2` admits gauges whose drainage-area match is noise. Above 1,000 km² only
+    730 of 1,354 candidates snap within tolerance, against 667 of 890 above 2,000 km².
+
+!!! note "Why not nearest-centre snapping"
+    It was tried first and misplaced about half of the large gauges, with drainage-area
+    errors up to a factor of 201. A gauge near a cell edge is frequently closest to the
+    centre of a cell its river never enters, so proximity alone is not evidence of
+    hydrologic connection. Matching on accumulated area tests the connection directly.
+
+Residual area mismatch is handled by scaling predictions by the inverse of the ratio,
+applied identically in training and evaluation so the parameterization is never asked to
+absorb it.
 
 ## 5. Validate
 

@@ -84,6 +84,63 @@ This creates two files used for routing:
 - `hydrofabric_v2.2_conus_adjacency.zarr` — sparse COO matrix of the full CONUS river network
 - `hydrofabric_v2.2_gages_conus_adjacency.zarr` — zarr.Group of sparse COO matrices for networks upstream of USGS gauges
 
+### Gridded (ISIMIP DDM30) routing
+
+DDR also routes on the ISIMIP3b DDM30 0.5-degree drainage-direction grid instead of vector
+flowlines. A self-contained sample runs with no external data:
+
+```sh
+uv run python examples/juniata_gridded/train_gridded.py --epochs 30
+```
+
+See [`examples/juniata_gridded/README.md`](examples/juniata_gridded/README.md) to run it,
+[`docs/gridded_data.md`](docs/gridded_data.md) to obtain every input, and
+[`docs/gridded_methods.md`](docs/gridded_methods.md) for how it works.
+
+#### How the gauges are selected
+
+Grid resolution decides which gauges are usable, so selection is a filter chain rather
+than a choice. A 0.5-degree cell is about 2,350 km², so a basin smaller than one routing
+element cannot be represented at all. Starting from `references/gage_info/gages_3000.csv`:
+
+| Step | Gauges | Why |
+|---|---|---|
+| In `gages_3000.csv` | 3,211 | the standard training set |
+| Drainage area > 2,000 km² | 890 | 2,416 gauges are sub-cell and cannot be resolved |
+| Snap within area tolerance | 667 | 3×3 drainage-area match, median ratio 1.01 |
+| Observation coverage > 90% | 620 | usable over the evaluation period |
+
+Snapping searches the 3×3 cell neighbourhood around the gauge coordinate and keeps the
+cell minimising `|log(cell_upstream_area / gauge_drainage_area)|`, taking the better gauge
+when two land in the same cell. Assigning each gauge to the nearest cell centre instead
+was tested and rejected: it misplaced roughly half of the large gauges, in one case by a
+factor of 201 in drainage area, because a gauge near a cell edge often sits closest to a
+cell its river never enters.
+
+The area tolerance is `DA_TOLERANCE = (0.7, 1.4)` in `ddr_benchmarks.gridded`, bounding
+the ratio of the cell's accumulated area to the gauge's reported drainage area. A gauge
+survives only if its best-matching cell drains between 70% and 140% of the reported
+basin. The bounds look lopsided but are nearly symmetric in the space the matching works
+in, since log(0.7) = −0.357 and log(1.4) = +0.336 sit the same distance either side of a
+perfect match. That matters because drainage area is multiplicative: a cell draining twice
+too much and one draining half as much are equally wrong, which a linear window would not
+capture. The tolerance rejects rather than constrains — the search always returns its
+closest match, and the tolerance then discards it if even that is too far off. It is not
+binding for large basins, where the median accepted ratio is 1.01, but bites near the
+resolution floor, where a single cell is a large fraction of the basin. Override it per
+call with `snap_gauges(..., tolerance=...)`.
+
+Raise the threshold with `--min-da-km2` if you want a stricter set; above 5,000 km² gives
+337 gauges. The remaining area mismatch is corrected by scaling predictions by the inverse
+of the drainage-area ratio, applied identically in training and evaluation.
+
+The lateral inflow and the attribute set both come from the high-resolution CONUS dataset
+of Song, Bindas et al. (2025) — the dHBV2.0 differentiable model that provides 40 years of
+daily runoff for ~180,000 MERIT unit catchments, and whose attribute tables define the
+predictors used by the routing parameterization. The dataset is archived at
+[10.5281/zenodo.13774373](https://doi.org/10.5281/zenodo.13774373) and the paper at
+[10.1029/2024WR038928](https://doi.org/10.1029/2024WR038928); see the citation below.
+
 ### Pre-trained Examples
 
 The `examples/` directory contains pre-trained weights and notebooks for both
