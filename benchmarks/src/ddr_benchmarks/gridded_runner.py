@@ -40,6 +40,11 @@ class GriddedPaths:
     obs_icechunk: Path
     gages_csv: Path
     cache_dir: Path
+    # Area-weighted Q' regridded onto cells (scripts/build_gridded_qprime.py). When set,
+    # the benchmark uses it, matching what training reads. When None it falls back to
+    # flowline-midpoint assignment, which misplaces the ~40% of catchments that straddle
+    # a cell edge and is kept only for comparison.
+    qprime_icechunk: Path | None = None
 
 
 def _open_icechunk(path: Path) -> "xr.Dataset":  # type: ignore[name-defined]  # noqa: F821
@@ -118,9 +123,13 @@ def run_conus_benchmark(
     dn = np.full(len(order), -1, dtype=np.int64)
     dn[cols_g] = rows_g
 
-    # --- network: cells receiving MERIT Q' plus their downstream chains ---
-    comid_cell = comid_cell_map(paths)
-    forced_pos = np.array(sorted({pos[c] for c in comid_cell.cell.unique() if c in pos}))
+    # --- network: cells receiving Q' plus their downstream chains ---
+    if paths.qprime_icechunk is not None:
+        qp_ds = _open_icechunk(paths.qprime_icechunk).sel(time=slice(start, end))
+        forced_pos = np.array(sorted({pos[int(c)] for c in qp_ds.divide_id.values if int(c) in pos}))
+    else:
+        comid_cell = comid_cell_map(paths)
+        forced_pos = np.array(sorted({pos[c] for c in comid_cell.cell.unique() if c in pos}))
     node_pos = downstream_closure(forced_pos, dn)
     n = len(node_pos)
     pos_to_c = {int(p): i for i, p in enumerate(node_pos)}
@@ -157,7 +166,10 @@ def run_conus_benchmark(
     outflow_idx = [np.array([pos_to_c[pos[c]]]) for c in gauges.cell]
 
     # --- lateral inflow: daily Qr summed per cell, repeated to hourly ---
-    qp_daily = _aggregate_qprime(paths, comid_cell, node_pos, order, pos_to_c, pos, start, end)
+    if paths.qprime_icechunk is not None:
+        qp_daily = _cell_qprime(qp_ds, node_pos, order, pos_to_c)
+    else:
+        qp_daily = _aggregate_qprime(paths, comid_cell, node_pos, order, pos_to_c, pos, start, end)
 
     return _route_and_score(
         paths,
@@ -268,6 +280,30 @@ def qprime_matrix(ds: "xr.Dataset", divide_ids: "np.ndarray") -> "np.ndarray":  
         raise ValueError(f"Qr must have dimensions (divide_id, time) in either order; got {qr.dims}")
     sel = qr.sel(divide_id=np.asarray(divide_ids)).transpose("time", "divide_id")
     return np.nan_to_num(sel.values.astype(np.float32))
+
+
+def _cell_qprime(
+    ds: "xr.Dataset",  # type: ignore[name-defined] # noqa: F821
+    node_pos: "np.ndarray",
+    order: "np.ndarray",
+    pos_to_c: dict[int, int],
+) -> "np.ndarray":
+    """Lateral inflow per node from an already-cell-indexed Q' store.
+
+    The store carries one series per cell, so this is a lookup rather than an
+    aggregation; cells absent from the store contribute nothing.
+    """
+    import numpy as np
+
+    cells = np.asarray(ds.divide_id.values, dtype=np.int64)
+    qr = qprime_matrix(ds, cells)  # (time, cell), layout-safe
+    col_of_cell = {int(c): j for j, c in enumerate(cells)}
+    qp = np.zeros((qr.shape[0], len(node_pos)), dtype=np.float32)
+    for p_ in node_pos:
+        j = col_of_cell.get(int(order[int(p_)]))
+        if j is not None:
+            qp[:, pos_to_c[int(p_)]] = qr[:, j]
+    return qp
 
 
 def _aggregate_qprime(
